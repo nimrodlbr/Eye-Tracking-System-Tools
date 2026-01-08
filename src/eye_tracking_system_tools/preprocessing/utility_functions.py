@@ -2,11 +2,21 @@ import numpy as np
 import pathlib
 import math
 import tqdm
+# Compatibility patch for StrEnum on Python 3.10
+import sys
+if sys.version_info < (3, 11):
+    from enum import Enum
+    class StrEnum(str, Enum):
+        """Backport of StrEnum for Python 3.10 compatibility."""
+        def _generate_next_value_(name, start, count, last_values):
+            return name
+    import enum
+    enum.StrEnum = StrEnum
 from open_ephys import analysis as oea
 import scipy.io
 from matplotlib import pyplot as plt
-from BlockSync_class import *
-from OERecording import *
+from .BlockSync_class import *
+from .OERecording import *
 import scipy.io
 import h5py
 import re
@@ -209,7 +219,7 @@ def sort_synced_saccades(b_dict):
     }
     for e in ['L', 'R']:
         inds = ind_dict[e].astype(int)
-        logical = np.ones(len(b_dict[e]['timestamps'])).astype(np.bool)
+        logical = np.ones(len(b_dict[e]['timestamps'])).astype(bool)
         logical[inds] = 0
         non_sync_b_dict[e] = {
             "timestamps": np.array(b_dict[e]['timestamps'])[logical],

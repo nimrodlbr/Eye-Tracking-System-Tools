@@ -6,18 +6,53 @@ import pathlib
 import subprocess as sp
 import cv2
 import numpy as np
+# Compatibility patch for StrEnum on Python 3.10
+import sys
+if sys.version_info < (3, 11):
+    from enum import Enum
+    class StrEnum(str, Enum):
+        """Backport of StrEnum for Python 3.10 compatibility."""
+        def _generate_next_value_(name, start, count, last_values):
+            return name
+    import enum
+    enum.StrEnum = StrEnum
 import open_ephys.analysis as oea
 import pandas as pd
 import scipy.stats as stats
 from bokeh.io import output as b_output
 from bokeh.models import HoverTool
 from bokeh.plotting import figure, show
-from ellipse import LsqEllipse
+try:
+    from lsq_ellipse import LsqEllipse
+except ImportError:
+    try:
+        # lsq-ellipse package installs ellipse.py directly in site-packages
+        # Need to import it as a file module to avoid conflict with ellipse package
+        import importlib.util
+        import sys
+        import os
+        ellipse_found = False
+        for p in sys.path:
+            if 'site-packages' in p:
+                ellipse_file = os.path.join(p, 'ellipse.py')
+                if os.path.exists(ellipse_file):
+                    spec = importlib.util.spec_from_file_location('ellipse_lsq', ellipse_file)
+                    ellipse_lsq = importlib.util.module_from_spec(spec)
+                    spec.loader.exec_module(ellipse_lsq)
+                    if hasattr(ellipse_lsq, 'LsqEllipse'):
+                        LsqEllipse = ellipse_lsq.LsqEllipse
+                        ellipse_found = True
+                        break
+        if not ellipse_found:
+            raise ImportError("ellipse.py with LsqEllipse not found")
+    except (ImportError, AttributeError, Exception):
+        # Final fallback to our custom implementation
+        from ._ellipse_fit import LsqEllipse
 from lxml import etree
 from scipy import signal
 from tqdm import tqdm
 import pickle
-from OERecording import OERecording
+from .OERecording import OERecording
 from scipy.signal import welch, fftconvolve
 from scipy.stats import zscore as scipy_zscore
 from scipy.signal import find_peaks as scipy_find_peaks
@@ -53,16 +88,17 @@ def bokeh_plotter(data_list, label_list,
     fig = bokeh.plotting.figure(title=f'bokeh explorer: {plot_name}',
                                 x_axis_label=x_axis,
                                 y_axis_label=y_axis,
-                                plot_width=1500,
-                                plot_height=700)
+                                width=1500,
+                                height=700)
 
     for i, vec in enumerate(range(len(data_list))):
         color = next(color_cycle)
-        data_vector = data_list[vec]
+        data_vector = np.asarray(data_list[vec])
+        x_axis_data = np.arange(len(data_vector))
         if label_list is None:
-            fig.line(range(len(data_vector)), data_vector, line_color=color, legend_label=f"Line {len(fig.renderers)}")
+            fig.line(x_axis_data, data_vector, line_color=color, legend_label=f"Line {len(fig.renderers)}")
         elif len(label_list) == len(data_list):
-            fig.line(range(len(data_vector)), data_vector, line_color=color, legend_label=f"{label_list[i]}")
+            fig.line(x_axis_data, data_vector, line_color=color, legend_label=f"{label_list[i]}")
 
     if peaks is not None:
         fig.circle(peaks, data_vector[peaks], size=10, color='red')
@@ -1124,8 +1160,8 @@ class BlockSync:
         bokeh_fig = figure(title=f'Block Number {self.block_num} Arena Video Synchronization Verify',
                            x_axis_label='Frame',
                            y_axis_label='Z_Score',
-                           plot_width=1500,
-                           plot_height=700
+                           width=1500,
+                           height=700
                            )
         color_list = ['orange', 'purple', 'teal', 'green', 'red']
         for ind, video in enumerate(columns):
@@ -1309,8 +1345,8 @@ class BlockSync:
         bokeh_fig = figure(title=f'self Number {self.block_num} Full Synchronization Verification',
                            x_axis_label='Frame',
                            y_axis_label='Brightness Z_Score',
-                           plot_width=1500,
-                           plot_height=700
+                           width=1500,
+                           height=700
                            )
         color_list = ['orange', 'purple', 'teal', 'green', 'yellow']
         if with_arena:
@@ -1721,22 +1757,26 @@ class BlockSync:
         fig = bokeh.plotting.figure(title=f'bokeh explorer: {plot_name}',
                                     x_axis_label=x_axis,
                                     y_axis_label=y_axis,
-                                    plot_width=1500,
-                                    plot_height=700)
+                                    width=1500,
+                                    height=700)
 
         for i, vec in enumerate(range(len(data_list))):
             color = next(color_cycle)
-            data_vector = data_list[vec]
+            data_vector = np.asarray(data_list[vec])
+            x_axis_data = np.arange(len(data_vector))
             if label_list is None:
-                fig.line(range(len(data_vector)), data_vector, line_color=color,
+                fig.line(x_axis_data, data_vector, line_color=color,
                          legend_label=f"Line {len(fig.renderers)}")
             elif len(label_list) == len(data_list):
-                fig.line(range(len(data_vector)), data_vector, line_color=color, legend_label=f"{label_list[i]}")
+                fig.line(x_axis_data, data_vector, line_color=color, legend_label=f"{label_list[i]}")
             if peaks is not None and peaks_list is True:
                 fig.circle(peaks[i], data_vector[peaks[i]], size=10, color=color)
 
         if peaks is not None and peaks_list is False:
-            fig.circle(peaks, data_vector[peaks], size=10, color='red')
+            # Use the last data_vector for single peak list
+            if len(data_list) > 0:
+                last_data_vector = np.asarray(data_list[-1])
+                fig.circle(peaks, last_data_vector[peaks], size=10, color='red')
 
         if export_path is not False:
             print(f'exporting to {export_path}')
@@ -1756,26 +1796,46 @@ class BlockSync:
         """
 
         print(f'data length is {len(data)}')
+        # Convert data to numpy array if needed
+        data = np.asarray(data)
+        if len(data) == 0:
+            raise ValueError("Input data is empty")
+        
         # use a function to get relative z-scores and deal with changes in ambient light
         z_score_data = self.rolling_window_z_scores(data, roll_w_size=roll_w_size)
         z_score_data = z_score_data[:len(data)]
         print(f'z_score length is {len(z_score_data)}')
+        
+        # Check for invalid values
+        if np.any(~np.isfinite(z_score_data)):
+            print("Warning: z_score_data contains NaN or Inf values. Replacing with 0.")
+            z_score_data = np.nan_to_num(z_score_data, nan=0.0, posinf=0.0, neginf=0.0)
         # detect peaks based on the scipy algorithm
         peak_indices, _ = scipy_find_peaks(-1 * z_score_data, width=1, distance=3000)
 
         # expand the peaks to include the dimming and re-lighting frames
-        expanded_indices = np.sort(np.array([peak_indices - 2,
-                                             peak_indices - 1,
-                                             peak_indices,
-                                             peak_indices + 1,
-                                             peak_indices + 2]).flatten())
+        if len(peak_indices) == 0:
+            # No peaks found, return empty array
+            expanded_indices = np.array([], dtype=int)
+        else:
+            # Ensure indices stay within bounds [0, len(z_score_data)-1]
+            max_idx = len(z_score_data) - 1
+            expanded_indices = np.sort(np.array([
+                np.clip(peak_indices - 2, 0, max_idx),
+                np.clip(peak_indices - 1, 0, max_idx),
+                np.clip(peak_indices, 0, max_idx),
+                np.clip(peak_indices + 1, 0, max_idx),
+                np.clip(peak_indices + 2, 0, max_idx)
+            ]).flatten())
+            # Remove duplicates while preserving order
+            expanded_indices = np.unique(expanded_indices)
 
         if plot:
-            self.bokeh_plotter([z_score_data], ['z_score'],
-                               plot_name=plot_title,
-                               x_axis='Frame',
-                               y_axis='brightness Z score',
-                               peaks=expanded_indices)
+            BlockSync.bokeh_plotter([z_score_data], ['z_score'],
+                                    plot_name=plot_title,
+                                    x_axis='Frame',
+                                    y_axis='brightness Z score',
+                                    peaks=expanded_indices)
 
         return expanded_indices
 
@@ -2207,7 +2267,7 @@ class BlockSync:
             df = pd.DataFrame.from_dict(self.re_jitter_dict)
         print(video_indices)
         if len(video_indices) < 1:
-            self.bokeh_plotter([df.top_correlation_dist], ['drift_distance'], peaks=video_indices)
+            BlockSync.bokeh_plotter([df.top_correlation_dist], ['drift_distance'], peaks=video_indices)
         else:
             print('no indices were found to remove')
         print('If these parameters produce good results, run the "remove_large_jitter" function with them')
@@ -2595,11 +2655,11 @@ class BlockSync:
             z_score_data_r = self.rolling_window_z_scores(r_vals, roll_w_size=1500)
             z_score_data_l = self.rolling_window_z_scores(l_vals, roll_w_size=1500)
 
-            self.bokeh_plotter([z_score_data_r, z_score_data_l],
-                               label_list=['r_scores', 'l_scores'],
-                               x_axis='Frame',
-                               y_axis='brightness Z score',
-                               peaks=[r_inds, l_inds], peaks_list=True)
+            BlockSync.bokeh_plotter([z_score_data_r, z_score_data_l],
+                                    label_list=['r_scores', 'l_scores'],
+                                    x_axis='Frame',
+                                    y_axis='brightness Z score',
+                                    peaks=[r_inds, l_inds], peaks_list=True)
         # I want to understand the drift between the two corrected l_ms vectors now -
         # if a frame appears in two l_ms values, take the larger one (a duplicated frame)
         l_frames = []
@@ -3111,15 +3171,15 @@ class BlockSync:
             b_fig = figure(title=f'Pupil combined metrics block {self.block_num}',
                            x_axis_label='OE Timestamps',
                            y_axis_label='Z score',
-                           plot_width=1500,
-                           plot_height=700)
+                           width=1500,
+                           height=700)
         else:
             x_axis = self.final_sync_df['Arena_TTL'].values / (self.sample_rate / 1000)
             b_fig = figure(title=f'Pupil combined metrics block {self.block_num}',
                            x_axis_label='[Milliseconds]',
                            y_axis_label='[Z score]',
-                           plot_width=1500,
-                           plot_height=700)
+                           width=1500,
+                           height=700)
         b_fig.add_tools(HoverTool())
         b_fig.line(x_axis, le_el_z + 7, legend_label='Left Eye Diameter', line_width=1.5, line_color='blue')
         b_fig.line(x_axis, le_x_z + 14, legend_label='Left Eye X Position', line_width=1, line_color='cyan')
@@ -3161,8 +3221,8 @@ class BlockSync:
         b_fig = figure(title='pupil speed graphs',
                        x_axis_label='ms',
                        y_axis_label='euclidean speed',
-                       plot_width=1500,
-                       plot_height=700)
+                       width=1500,
+                       height=700)
         x_axis = (self.final_sync_df['Arena_TTL'].values -
                   self.final_sync_df['Arena_TTL'].values[0]) / (self.sample_rate / 1000)
         b_fig.line(x_axis,
@@ -3732,7 +3792,7 @@ class BlockSync:
         }
         for e in ['L', 'R']:
             inds = ind_dict[e].astype(int)
-            logical = np.ones(len(b_dict[e]['timestamps'])).astype(np.bool)
+            logical = np.ones(len(b_dict[e]['timestamps'])).astype(bool)
             logical[inds] = 0
             non_sync_b_dict[e] = {
                 "timestamps": np.array(b_dict[e]['timestamps'])[logical],
