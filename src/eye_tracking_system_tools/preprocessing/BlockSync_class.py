@@ -22,32 +22,7 @@ import scipy.stats as stats
 from bokeh.io import output as b_output
 from bokeh.models import HoverTool
 from bokeh.plotting import figure, show
-try:
-    from lsq_ellipse import LsqEllipse
-except ImportError:
-    try:
-        # lsq-ellipse package installs ellipse.py directly in site-packages
-        # Need to import it as a file module to avoid conflict with ellipse package
-        import importlib.util
-        import sys
-        import os
-        ellipse_found = False
-        for p in sys.path:
-            if 'site-packages' in p:
-                ellipse_file = os.path.join(p, 'ellipse.py')
-                if os.path.exists(ellipse_file):
-                    spec = importlib.util.spec_from_file_location('ellipse_lsq', ellipse_file)
-                    ellipse_lsq = importlib.util.module_from_spec(spec)
-                    spec.loader.exec_module(ellipse_lsq)
-                    if hasattr(ellipse_lsq, 'LsqEllipse'):
-                        LsqEllipse = ellipse_lsq.LsqEllipse
-                        ellipse_found = True
-                        break
-        if not ellipse_found:
-            raise ImportError("ellipse.py with LsqEllipse not found")
-    except (ImportError, AttributeError, Exception):
-        # Final fallback to our custom implementation
-        from ._ellipse_fit import LsqEllipse
+from eye_tracking_system_tools.preprocessing.ellipse_fit import LsqEllipse
 from lxml import etree
 from scipy import signal
 from tqdm import tqdm
@@ -65,7 +40,6 @@ import datetime
 This script defines the BlockSync class which takes all of the relevant data for a given trial and can be utilized
 to produce a synchronized dataframe for all video sources to be used for further analysis
 '''
-
 
 # noinspection SpellCheckingInspection
 
