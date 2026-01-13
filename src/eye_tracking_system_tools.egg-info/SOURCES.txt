@@ -1,0 +1,16 @@
+LICENSE
+README.md
+pyproject.toml
+src/eye_tracking_system_tools/__init__.py
+src/eye_tracking_system_tools.egg-info/PKG-INFO
+src/eye_tracking_system_tools.egg-info/SOURCES.txt
+src/eye_tracking_system_tools.egg-info/dependency_links.txt
+src/eye_tracking_system_tools.egg-info/requires.txt
+src/eye_tracking_system_tools.egg-info/top_level.txt
+src/eye_tracking_system_tools/figures/__init__.py
+src/eye_tracking_system_tools/io/__init__.py
+src/eye_tracking_system_tools/preprocessing/BlockSync_class.py
+src/eye_tracking_system_tools/preprocessing/OERecording.py
+src/eye_tracking_system_tools/preprocessing/__init__.py
+src/eye_tracking_system_tools/preprocessing/utility_functions.py
+src/eye_tracking_system_tools/utils/__init__.py

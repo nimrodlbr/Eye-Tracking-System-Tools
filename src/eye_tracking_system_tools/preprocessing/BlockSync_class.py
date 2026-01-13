@@ -6,18 +6,21 @@ import pathlib
 import subprocess as sp
 import cv2
 import numpy as np
+# IMPORTANT: Import enum compatibility patch FIRST, before open_ephys.analysis
+# This patches enum.StrEnum globally for Python 3.10 compatibility
+from . import _enum_compat
 import open_ephys.analysis as oea
 import pandas as pd
 import scipy.stats as stats
 from bokeh.io import output as b_output
 from bokeh.models import HoverTool
 from bokeh.plotting import figure, show
-from ellipse import LsqEllipse
+from eye_tracking_system_tools.preprocessing.ellipse_fit import LsqEllipse
 from lxml import etree
 from scipy import signal
 from tqdm import tqdm
 import pickle
-from OERecording import OERecording
+from .OERecording import OERecording
 from scipy.signal import welch, fftconvolve
 from scipy.stats import zscore as scipy_zscore
 from scipy.signal import find_peaks as scipy_find_peaks
@@ -25,52 +28,14 @@ from matplotlib import pyplot as plt
 import bokeh
 from itertools import cycle
 import datetime
+# Note: bokeh_plotter is imported lazily in the static method to avoid circular import
 
 '''
 This script defines the BlockSync class which takes all of the relevant data for a given trial and can be utilized
 to produce a synchronized dataframe for all video sources to be used for further analysis
 '''
 
-
 # noinspection SpellCheckingInspection
-
-
-def bokeh_plotter(data_list, label_list,
-                  plot_name='default',
-                  x_axis='X', y_axis='Y',
-                  peaks=None, export_path=False):
-    """Generates an interactive Bokeh plot for the given data vector.
-    Args:
-        data_list (list or array): The data to be plotted.
-        label_list (list of str): The labels of the data vectors
-        plot_name (str, optional): The title of the plot. Defaults to 'default'.
-        x_axis (str, optional): The label for the x-axis. Defaults to 'X'.
-        y_axis (str, optional): The label for the y-axis. Defaults to 'Y'.
-        peaks (list or array, optional): Indices of peaks to highlight on the plot. Defaults to None.
-        export_path (False or str): when set to str, will output the resulting html fig
-    """
-    color_cycle = cycle(bokeh.palettes.Category10_10)
-    fig = bokeh.plotting.figure(title=f'bokeh explorer: {plot_name}',
-                                x_axis_label=x_axis,
-                                y_axis_label=y_axis,
-                                plot_width=1500,
-                                plot_height=700)
-
-    for i, vec in enumerate(range(len(data_list))):
-        color = next(color_cycle)
-        data_vector = data_list[vec]
-        if label_list is None:
-            fig.line(range(len(data_vector)), data_vector, line_color=color, legend_label=f"Line {len(fig.renderers)}")
-        elif len(label_list) == len(data_list):
-            fig.line(range(len(data_vector)), data_vector, line_color=color, legend_label=f"{label_list[i]}")
-
-    if peaks is not None:
-        fig.circle(peaks, data_vector[peaks], size=10, color='red')
-
-    if export_path is not False:
-        print(f'exporting to {export_path}')
-        bokeh.io.output.output_file(filename=str(export_path / f'{plot_name}.html'), title=f'{plot_name}')
-    bokeh.plotting.show(fig)
 
 
 class BlockSync:
@@ -468,9 +433,15 @@ class BlockSync:
 
     def get_eye_brightness_vectors_deprecated(self, threshold_value=30, export=True):
         """
-        This is a utility function that generates the eye brightness vectors for later synchronization
-        This step should be performed by a long looper over all data before synchronization
-        :param threshold_value: The threshold value to use as mask before claculating brightness
+        DEPRECATED: Use load_eye_brightness_vectors() instead.
+        
+        This method is kept for backward compatibility but is no longer recommended.
+        The new load_eye_brightness_vectors() method provides improved functionality.
+        
+        This is a utility function that generates the eye brightness vectors for later synchronization.
+        This step should be performed by a long looper over all data before synchronization.
+        
+        :param threshold_value: The threshold value to use as mask before calculating brightness
         :param export: if true will export the vectors into two .csv files
         :return: /
         """
@@ -1124,8 +1095,8 @@ class BlockSync:
         bokeh_fig = figure(title=f'Block Number {self.block_num} Arena Video Synchronization Verify',
                            x_axis_label='Frame',
                            y_axis_label='Z_Score',
-                           plot_width=1500,
-                           plot_height=700
+                           width=1500,
+                           height=700
                            )
         color_list = ['orange', 'purple', 'teal', 'green', 'red']
         for ind, video in enumerate(columns):
@@ -1309,8 +1280,8 @@ class BlockSync:
         bokeh_fig = figure(title=f'self Number {self.block_num} Full Synchronization Verification',
                            x_axis_label='Frame',
                            y_axis_label='Brightness Z_Score',
-                           plot_width=1500,
-                           plot_height=700
+                           width=1500,
+                           height=700
                            )
         color_list = ['orange', 'purple', 'teal', 'green', 'yellow']
         if with_arena:
@@ -1702,12 +1673,18 @@ class BlockSync:
 
         return result
 
+    # bokeh_plotter is now imported from utility_functions
+    # For backward compatibility, provide a static method that calls the consolidated version
     @staticmethod
     def bokeh_plotter(data_list, label_list,
                       plot_name='default',
                       x_axis='X', y_axis='Y',
                       peaks=None, peaks_list=False, export_path=False):
         """Generates an interactive Bokeh plot for the given data vector.
+        
+        This is a wrapper around the consolidated bokeh_plotter from utility_functions
+        to maintain backward compatibility with existing code that calls BlockSync.bokeh_plotter().
+        
         Args:
             data_list (list or array): The data to be plotted.
             label_list (list of str): The labels of the data vectors
@@ -1715,33 +1692,12 @@ class BlockSync:
             x_axis (str, optional): The label for the x-axis. Defaults to 'X'.
             y_axis (str, optional): The label for the y-axis. Defaults to 'Y'.
             peaks (list or array, optional): Indices of peaks to highlight on the plot. Defaults to None.
+            peaks_list (bool, optional): If True, treats peaks as a list of peak arrays. Defaults to False.
             export_path (False or str): when set to str, will output the resulting html fig
         """
-        color_cycle = cycle(bokeh.palettes.Category10_10)
-        fig = bokeh.plotting.figure(title=f'bokeh explorer: {plot_name}',
-                                    x_axis_label=x_axis,
-                                    y_axis_label=y_axis,
-                                    plot_width=1500,
-                                    plot_height=700)
-
-        for i, vec in enumerate(range(len(data_list))):
-            color = next(color_cycle)
-            data_vector = data_list[vec]
-            if label_list is None:
-                fig.line(range(len(data_vector)), data_vector, line_color=color,
-                         legend_label=f"Line {len(fig.renderers)}")
-            elif len(label_list) == len(data_list):
-                fig.line(range(len(data_vector)), data_vector, line_color=color, legend_label=f"{label_list[i]}")
-            if peaks is not None and peaks_list is True:
-                fig.circle(peaks[i], data_vector[peaks[i]], size=10, color=color)
-
-        if peaks is not None and peaks_list is False:
-            fig.circle(peaks, data_vector[peaks], size=10, color='red')
-
-        if export_path is not False:
-            print(f'exporting to {export_path}')
-            bokeh.io.output.output_file(filename=str(export_path / f'{plot_name}.html'), title=f'{plot_name}')
-        bokeh.plotting.show(fig)
+        # Lazy import to avoid circular dependency (utility_functions imports BlockSync)
+        from .utility_functions import bokeh_plotter as _bokeh_plotter
+        return _bokeh_plotter(data_list, label_list, plot_name, x_axis, y_axis, peaks, peaks_list, export_path)
 
     def collect_lights_out_events(self, data, roll_w_size=1500, plot=False, plot_title='peak detector output'):
         """Identifies potential lights-out events from the given data.
@@ -1756,26 +1712,46 @@ class BlockSync:
         """
 
         print(f'data length is {len(data)}')
+        # Convert data to numpy array if needed
+        data = np.asarray(data)
+        if len(data) == 0:
+            raise ValueError("Input data is empty")
+        
         # use a function to get relative z-scores and deal with changes in ambient light
         z_score_data = self.rolling_window_z_scores(data, roll_w_size=roll_w_size)
         z_score_data = z_score_data[:len(data)]
         print(f'z_score length is {len(z_score_data)}')
+        
+        # Check for invalid values
+        if np.any(~np.isfinite(z_score_data)):
+            print("Warning: z_score_data contains NaN or Inf values. Replacing with 0.")
+            z_score_data = np.nan_to_num(z_score_data, nan=0.0, posinf=0.0, neginf=0.0)
         # detect peaks based on the scipy algorithm
         peak_indices, _ = scipy_find_peaks(-1 * z_score_data, width=1, distance=3000)
 
         # expand the peaks to include the dimming and re-lighting frames
-        expanded_indices = np.sort(np.array([peak_indices - 2,
-                                             peak_indices - 1,
-                                             peak_indices,
-                                             peak_indices + 1,
-                                             peak_indices + 2]).flatten())
+        if len(peak_indices) == 0:
+            # No peaks found, return empty array
+            expanded_indices = np.array([], dtype=int)
+        else:
+            # Ensure indices stay within bounds [0, len(z_score_data)-1]
+            max_idx = len(z_score_data) - 1
+            expanded_indices = np.sort(np.array([
+                np.clip(peak_indices - 2, 0, max_idx),
+                np.clip(peak_indices - 1, 0, max_idx),
+                np.clip(peak_indices, 0, max_idx),
+                np.clip(peak_indices + 1, 0, max_idx),
+                np.clip(peak_indices + 2, 0, max_idx)
+            ]).flatten())
+            # Remove duplicates while preserving order
+            expanded_indices = np.unique(expanded_indices)
 
         if plot:
-            self.bokeh_plotter([z_score_data], ['z_score'],
-                               plot_name=plot_title,
-                               x_axis='Frame',
-                               y_axis='brightness Z score',
-                               peaks=expanded_indices)
+            BlockSync.bokeh_plotter([z_score_data], ['z_score'],
+                                    plot_name=plot_title,
+                                    x_axis='Frame',
+                                    y_axis='brightness Z score',
+                                    peaks=expanded_indices)
 
         return expanded_indices
 
@@ -2207,7 +2183,7 @@ class BlockSync:
             df = pd.DataFrame.from_dict(self.re_jitter_dict)
         print(video_indices)
         if len(video_indices) < 1:
-            self.bokeh_plotter([df.top_correlation_dist], ['drift_distance'], peaks=video_indices)
+            BlockSync.bokeh_plotter([df.top_correlation_dist], ['drift_distance'], peaks=video_indices)
         else:
             print('no indices were found to remove')
         print('If these parameters produce good results, run the "remove_large_jitter" function with them')
@@ -2595,11 +2571,11 @@ class BlockSync:
             z_score_data_r = self.rolling_window_z_scores(r_vals, roll_w_size=1500)
             z_score_data_l = self.rolling_window_z_scores(l_vals, roll_w_size=1500)
 
-            self.bokeh_plotter([z_score_data_r, z_score_data_l],
-                               label_list=['r_scores', 'l_scores'],
-                               x_axis='Frame',
-                               y_axis='brightness Z score',
-                               peaks=[r_inds, l_inds], peaks_list=True)
+            BlockSync.bokeh_plotter([z_score_data_r, z_score_data_l],
+                                    label_list=['r_scores', 'l_scores'],
+                                    x_axis='Frame',
+                                    y_axis='brightness Z score',
+                                    peaks=[r_inds, l_inds], peaks_list=True)
         # I want to understand the drift between the two corrected l_ms vectors now -
         # if a frame appears in two l_ms values, take the larger one (a duplicated frame)
         l_frames = []
@@ -3111,15 +3087,15 @@ class BlockSync:
             b_fig = figure(title=f'Pupil combined metrics block {self.block_num}',
                            x_axis_label='OE Timestamps',
                            y_axis_label='Z score',
-                           plot_width=1500,
-                           plot_height=700)
+                           width=1500,
+                           height=700)
         else:
             x_axis = self.final_sync_df['Arena_TTL'].values / (self.sample_rate / 1000)
             b_fig = figure(title=f'Pupil combined metrics block {self.block_num}',
                            x_axis_label='[Milliseconds]',
                            y_axis_label='[Z score]',
-                           plot_width=1500,
-                           plot_height=700)
+                           width=1500,
+                           height=700)
         b_fig.add_tools(HoverTool())
         b_fig.line(x_axis, le_el_z + 7, legend_label='Left Eye Diameter', line_width=1.5, line_color='blue')
         b_fig.line(x_axis, le_x_z + 14, legend_label='Left Eye X Position', line_width=1, line_color='cyan')
@@ -3161,8 +3137,8 @@ class BlockSync:
         b_fig = figure(title='pupil speed graphs',
                        x_axis_label='ms',
                        y_axis_label='euclidean speed',
-                       plot_width=1500,
-                       plot_height=700)
+                       width=1500,
+                       height=700)
         x_axis = (self.final_sync_df['Arena_TTL'].values -
                   self.final_sync_df['Arena_TTL'].values[0]) / (self.sample_rate / 1000)
         b_fig.line(x_axis,
@@ -3732,7 +3708,7 @@ class BlockSync:
         }
         for e in ['L', 'R']:
             inds = ind_dict[e].astype(int)
-            logical = np.ones(len(b_dict[e]['timestamps'])).astype(np.bool)
+            logical = np.ones(len(b_dict[e]['timestamps'])).astype(bool)
             logical[inds] = 0
             non_sync_b_dict[e] = {
                 "timestamps": np.array(b_dict[e]['timestamps'])[logical],

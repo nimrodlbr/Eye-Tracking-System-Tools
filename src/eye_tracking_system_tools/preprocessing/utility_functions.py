@@ -1,20 +1,22 @@
 import numpy as np
 import pathlib
-import math
+import os
+import cv2
+from itertools import cycle
 import tqdm
-from open_ephys import analysis as oea
-import scipy.io
+# IMPORTANT: Import enum compatibility patch FIRST, before open_ephys.analysis
+# This patches enum.StrEnum globally for Python 3.10 compatibility
+from . import _enum_compat
 from matplotlib import pyplot as plt
-from BlockSync_class import *
-from OERecording import *
-import scipy.io
+from .BlockSync_class import BlockSync
+from .OERecording import OERecording
 import h5py
 import re
-from lxml import etree as ET
 import scipy.signal as sig
 import pandas as pd
 from scipy.stats import kde
 import bokeh.plotting
+import bokeh
 
 
 def nan_helper(y):
@@ -31,6 +33,21 @@ def nan_helper(y):
 
 
 def multi_block_saccade_dict_creation_current(blocklist, sampling_window_ms, ep_channel_number):
+    """
+    Create a saccade dictionary from multiple blocks with electrophysiology data.
+    
+    Processes multiple BlockSync objects to extract saccade events along with associated
+    electrophysiology data, accelerometer data, and eye tracking coordinates.
+    
+    Args:
+        blocklist (list): List of BlockSync objects to process
+        sampling_window_ms (float): Time window in milliseconds to extract around each saccade
+        ep_channel_number (int): Electrophysiology channel number to extract data from
+    
+    Returns:
+        dict: Nested dictionary organized by block number, then eye ('L'/'R'), containing
+            saccade data including timestamps, coordinates, spectral data, and accelerometer data
+    """
     saccade_dict = {}
     # loop over the blocks from here:
     for block in blocklist:
@@ -151,9 +168,20 @@ def multi_block_saccade_dict_creation_current(blocklist, sampling_window_ms, ep_
 
 def sort_synced_saccades(b_dict):
     """
-    This function takes a saccades dictionary and returns two sorted dictionaries - one with synced saccades, the other with non-synced saccades
-    :param b_dict:
-    :return:
+    Sort saccades into synced and non-synced dictionaries based on temporal alignment.
+    
+    This function takes a saccades dictionary and returns two sorted dictionaries:
+    one with synced saccades (occurring simultaneously in both eyes), and another 
+    with non-synced saccades.
+    
+    Args:
+        b_dict (dict): Dictionary containing saccade data for left ('L') and right ('R') eyes.
+            Expected structure: {'L': {'timestamps': [...], ...}, 'R': {'timestamps': [...], ...}}
+    
+    Returns:
+        tuple: (synced_b_dict, non_sync_b_dict) - Two dictionaries with the same structure
+            as input, containing only synced or non-synced saccades respectively.
+            Saccades are considered synced if they occur within 70ms (1400 samples at 20kHz) of each other.
     """
     # get the two timestamps vectors
     l_times = np.array(b_dict['L']['timestamps'])
@@ -209,7 +237,7 @@ def sort_synced_saccades(b_dict):
     }
     for e in ['L', 'R']:
         inds = ind_dict[e].astype(int)
-        logical = np.ones(len(b_dict[e]['timestamps'])).astype(np.bool)
+        logical = np.ones(len(b_dict[e]['timestamps'])).astype(bool)
         logical[inds] = 0
         non_sync_b_dict[e] = {
             "timestamps": np.array(b_dict[e]['timestamps'])[logical],
@@ -225,6 +253,18 @@ def sort_synced_saccades(b_dict):
 
 
 def saccade_before_after(coords):
+    """
+    Calculate the before, after, and delta values for a saccade coordinate array.
+    
+    Determines the start and end positions of a saccade by finding the minimum and 
+    maximum values in the coordinate array, then calculates the displacement.
+    
+    Args:
+        coords (array-like): 1D array of coordinate values (e.g., x or y positions)
+    
+    Returns:
+        tuple: (before, after, delta) - Start position, end position, and displacement
+    """
     max_ind = np.argmax(coords)
     min_ind = np.argmin(coords)
     if max_ind < min_ind:
@@ -238,14 +278,27 @@ def saccade_before_after(coords):
 
 
 def saccade_dict_enricher(saccade_dict):
+    """
+    Enrich a saccade dictionary with additional computed metrics.
+    
+    Adds speed, magnitude, displacement, and direction information to each saccade
+    in the dictionary. Modifies the dictionary in-place.
+    
+    Args:
+        saccade_dict (dict): Dictionary containing saccade data organized by block
+            and eye ('L'/'R'). Expected to have 'x_coords' and 'y_coords' for each saccade.
+    
+    Returns:
+        dict: The enriched saccade dictionary (same object, modified in-place)
+    """
     for k in saccade_dict.keys():
         sync_saccades = saccade_dict[k]
         for e in ['L', 'R']:
             sync_saccades[e]['x_speed'] = []
             sync_saccades[e]['y_speed'] = []
             sync_saccades[e]['magnitude'] = []
-            sync_saccades[e]['dx'] = []  # TEMP
-            sync_saccades[e]['dy'] = []  # TEMP
+            sync_saccades[e]['dx'] = []
+            sync_saccades[e]['dy'] = []
             sync_saccades[e]['direction'] = []
 
             for s in range(len(sync_saccades[e]['timestamps'])):
@@ -284,6 +337,22 @@ def saccade_dict_enricher(saccade_dict):
 
 
 def parse_dataset_to_df(saccade_dict, blocklist):
+    """
+    Convert a saccade dictionary into a pandas DataFrame.
+    
+    Flattens the nested saccade dictionary structure into a tabular format where
+    each row represents a single saccade with all its associated data.
+    
+    Args:
+        saccade_dict (dict): Dictionary containing saccade data organized by block number
+            and eye ('L'/'R'). Each saccade should have keys like 'timestamps', 'x_coords', etc.
+        blocklist (list): List of BlockSync objects used to extract datetime information
+            from block numbers.
+    
+    Returns:
+        pd.DataFrame: DataFrame with one row per saccade, containing columns for block,
+            eye, datetime, and all saccade metrics (timestamps, coordinates, speeds, etc.)
+    """
     date_list = [block.oe_dirname[-19:] for block in blocklist]
     num_list = [block.block_num for block in blocklist]
     num_date_dict = dict(zip(num_list, date_list))
@@ -296,7 +365,7 @@ def parse_dataset_to_df(saccade_dict, blocklist):
         for e in block.keys():
             eye = block[e]  # in one of the eyes
             for row in range(len(eye['samples'])):  # for each saccade
-                for col in eye.keys():  # for each columm
+                for col in eye.keys():  # for each column
                     v = eye[col][row]  # get value of location
                     df.at[index_counter, 'block'] = k
                     df.at[index_counter, 'eye'] = e
@@ -488,34 +557,74 @@ def data_cleanup(data, bad_indices, interpolate=False):
 def bokeh_plotter(data_list, label_list,
                   plot_name='default',
                   x_axis='X', y_axis='Y',
-                  peaks=None, export_path=False):
+                  peaks=None, peaks_list=False, export_path=False):
     """Generates an interactive Bokeh plot for the given data vector.
+    
+    This is a consolidated, globally compatible version that supports all use cases.
+    Works with both Bokeh 2.x and 3.x.
+    
     Args:
-        data_list (list or array): The data to be plotted.
-        label_list (list of str): The labels of the data vectors
+        data_list (list or array): The data to be plotted. Can be a list of arrays for multiple series.
+        label_list (list of str, optional): The labels of the data vectors. If None, auto-generates labels.
         plot_name (str, optional): The title of the plot. Defaults to 'default'.
         x_axis (str, optional): The label for the x-axis. Defaults to 'X'.
         y_axis (str, optional): The label for the y-axis. Defaults to 'Y'.
-        peaks (list or array, optional): Indices of peaks to highlight on the plot. Defaults to None.
-        export_path (False or str): when set to str, will output the resulting html fig
+        peaks (list or array, optional): Indices of peaks to highlight on the plot. 
+            If peaks_list=True, should be a list of peak arrays (one per data series).
+            If peaks_list=False, should be a single array of peaks applied to the last data series.
+            Defaults to None.
+        peaks_list (bool, optional): If True, treats peaks as a list of peak arrays (one per data series).
+            If False, treats peaks as a single array applied to the last data series. Defaults to False.
+        export_path (False or str or pathlib.Path, optional): When set to a path, will output the 
+            resulting HTML figure to that location. Defaults to False.
+    
+    Returns:
+        None (displays the plot)
     """
     color_cycle = cycle(bokeh.palettes.Category10_10)
-    fig = bokeh.plotting.figure(title=f'bokeh explorer: {plot_name}',
-                                x_axis_label=x_axis,
-                                y_axis_label=y_axis,
-                                plot_width=1500,
-                                plot_height=700)
+    
+    # Try Bokeh 3.x style first (width/height), fall back to 2.x style (plot_width/plot_height)
+    try:
+        fig = bokeh.plotting.figure(title=f'bokeh explorer: {plot_name}',
+                                    x_axis_label=x_axis,
+                                    y_axis_label=y_axis,
+                                    width=1500,
+                                    height=700)
+    except TypeError:
+        # Fall back to Bokeh 2.x style
+        fig = bokeh.plotting.figure(title=f'bokeh explorer: {plot_name}',
+                                    x_axis_label=x_axis,
+                                    y_axis_label=y_axis,
+                                    plot_width=1500,
+                                    plot_height=700)
 
     for i, vec in enumerate(range(len(data_list))):
         color = next(color_cycle)
-        data_vector = data_list[vec]
+        data_vector = np.asarray(data_list[vec])
+        x_axis_data = np.arange(len(data_vector))
+        
         if label_list is None:
-            fig.line(range(len(data_vector)), data_vector, line_color=color, legend_label=f"Line {len(fig.renderers)}")
+            fig.line(x_axis_data, data_vector, line_color=color,
+                     legend_label=f"Line {len(fig.renderers)}")
         elif len(label_list) == len(data_list):
-            fig.line(range(len(data_vector)), data_vector, line_color=color, legend_label=f"{label_list[i]}")
+            fig.line(x_axis_data, data_vector, line_color=color, legend_label=f"{label_list[i]}")
+        
+        # Handle peaks: per-line if peaks_list=True, otherwise handled after loop
+        if peaks is not None and peaks_list is True:
+            if isinstance(peaks, (list, tuple)) and i < len(peaks):
+                peak_array = np.asarray(peaks[i])
+                valid_peaks = peak_array[peak_array < len(data_vector)]
+                if len(valid_peaks) > 0:
+                    fig.circle(valid_peaks, data_vector[valid_peaks], size=10, color=color)
 
-    if peaks is not None:
-        fig.circle(peaks, data_vector[peaks], size=10, color='red')
+    # Handle single peak list (applied to last data series)
+    if peaks is not None and peaks_list is False:
+        if len(data_list) > 0:
+            last_data_vector = np.asarray(data_list[-1])
+            peak_array = np.asarray(peaks)
+            valid_peaks = peak_array[peak_array < len(last_data_vector)]
+            if len(valid_peaks) > 0:
+                fig.circle(valid_peaks, last_data_vector[valid_peaks], size=10, color='red')
 
     if export_path is not False:
         print(f'exporting to {export_path}')
