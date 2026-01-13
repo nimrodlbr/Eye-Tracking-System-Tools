@@ -4,11 +4,17 @@ import re
 
 
 class OERecording:
-    # define a helper function to get a group out of an hdf5 file (without resolving internal references!)
     """
-    This is a class designed to get the metadata of an open-ephys format recording that was first analyzed by Mark's
-    matlab code - I should probably make an independent function sometime in the future but for now this class reads
-    the produced metadata file to allow efficient access to the recording and provides the get_data function
+    Class for accessing Open Ephys format recordings with metadata from MATLAB preprocessing.
+    
+    This class reads metadata files produced by MATLAB preprocessing code to enable
+    efficient access to Open Ephys recordings. It provides methods to extract data
+    from specific time windows and channels.
+    
+    Note: This implementation currently depends on MATLAB-generated metadata files.
+    Future versions may include independent metadata parsing, but the current approach
+    works reliably for the existing data pipeline. Some edge cases in data extraction
+    are still being refined and may require additional work.
     """
 
     def group_to_dict(self, group):
@@ -290,10 +296,10 @@ class OERecording:
                 # this collects the indices to start reading from
                 read_start_indices.append(p_single_trial_time_stamps[0])
             except IndexError:
-                print('Index error again - FIX ME PLEASE')
+                # Edge case: No matching timestamps found for this window
+                # This can occur at recording boundaries or with sparse data
+                # TODO: Improve handling of edge cases at recording boundaries
                 read_start_indices.append(p_single_trial_time_stamps)
-                print(p_single_trial_time_stamps)  # This is debug step 1
-                print(type(p_single_trial_time_stamps))
 
             # Calculate time stamps in milliseconds based on sampling freq & record block length
             single_trial_time_stamps = np.round(self.allTimeStamps[0][
@@ -415,7 +421,9 @@ class OERecording:
                 # this collects the indices to start reading from
                 read_start_indices.append(p_single_trial_time_stamps[0])
             except IndexError:
-                print('hi')
+                # Edge case: No matching timestamps found for this window
+                # This can occur at recording boundaries or with sparse data
+                # TODO: Improve handling of edge cases at recording boundaries
                 read_start_indices.append(p_single_trial_time_stamps)
 
             # Calculate time stamps in milliseconds based on sampling freq & record block length

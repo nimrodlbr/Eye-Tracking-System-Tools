@@ -433,9 +433,15 @@ class BlockSync:
 
     def get_eye_brightness_vectors_deprecated(self, threshold_value=30, export=True):
         """
-        This is a utility function that generates the eye brightness vectors for later synchronization
-        This step should be performed by a long looper over all data before synchronization
-        :param threshold_value: The threshold value to use as mask before claculating brightness
+        DEPRECATED: Use load_eye_brightness_vectors() instead.
+        
+        This method is kept for backward compatibility but is no longer recommended.
+        The new load_eye_brightness_vectors() method provides improved functionality.
+        
+        This is a utility function that generates the eye brightness vectors for later synchronization.
+        This step should be performed by a long looper over all data before synchronization.
+        
+        :param threshold_value: The threshold value to use as mask before calculating brightness
         :param export: if true will export the vectors into two .csv files
         :return: /
         """
