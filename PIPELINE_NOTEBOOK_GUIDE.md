@@ -6,17 +6,19 @@ This repository uses Jupyter notebooks for different stages of the eye-tracking 
 
 ## Current Pipeline Structure
 
-1. **`block_synchronization.ipynb`** - Synchronization pipeline
+1. **`block_synchronization.ipynb`** - Synchronization pipeline for a single recording
    - Handles eye video synchronization to Open Ephys timebase
+   - Allows sync manual verification, frame-drop corrections and produces a final synchronization framework for a single block
+   - reads DLC files for pupil annotations
    - Performs jitter correction
    - Removes LED blink artifacts
-   - Creates final eye data dataframes
+   - Creates final eye data dataframes to the blocksync folder
 
-2. **`data_verification.ipynb`** (to be added) - Data verification pipeline
-   - Will verify data quality and consistency
-   - Check for missing data, outliers, etc.
+2. **`data_verification.ipynb`**  - Data verification pipeline
+   - Manual tools to verify correct pupil annotations, as well as selecting 0,0 reference points for degree-conversion a la jason kerr
 
-3. **Future pipelines** - Analysis and figure generation
+3. **`kerr_degree_conversion.ipynb`** - convert eye data to 
+
 
 ## Best Practices for Adding a New Pipeline Notebook
 
