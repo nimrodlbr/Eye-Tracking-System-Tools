@@ -1,23 +1,18 @@
 import numpy as np
 import pathlib
 import math
+import os
+import cv2
+from itertools import cycle
 import tqdm
-# Compatibility patch for StrEnum on Python 3.10
-import sys
-if sys.version_info < (3, 11):
-    from enum import Enum
-    class StrEnum(str, Enum):
-        """Backport of StrEnum for Python 3.10 compatibility."""
-        def _generate_next_value_(name, start, count, last_values):
-            return name
-    import enum
-    enum.StrEnum = StrEnum
+# IMPORTANT: Import enum compatibility patch FIRST, before open_ephys.analysis
+# This patches enum.StrEnum globally for Python 3.10 compatibility
+from . import _enum_compat
 from open_ephys import analysis as oea
 import scipy.io
 from matplotlib import pyplot as plt
 from .BlockSync_class import *
 from .OERecording import *
-import scipy.io
 import h5py
 import re
 from lxml import etree as ET

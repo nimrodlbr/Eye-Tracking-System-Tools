@@ -1,6 +1,9 @@
 """
 Compatibility shim for StrEnum on Python 3.10.
 StrEnum was introduced in Python 3.11, so we provide a backport for 3.10.
+
+This module patches enum.StrEnum globally when imported, which is needed
+for open_ephys.analysis library compatibility.
 """
 import sys
 from enum import Enum
@@ -42,3 +45,7 @@ else:
 
         def __repr__(self):
             return '%s.%s' % (self.__class__.__name__, self.name)
+    
+    # CRITICAL: Patch the enum module globally so open_ephys.analysis can import it
+    import enum
+    enum.StrEnum = StrEnum
