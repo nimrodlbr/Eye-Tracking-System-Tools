@@ -147,14 +147,6 @@ The `parsed_events.csv` file should be a pandas DataFrame (saved as CSV) with th
 - **Timestamp columns:** One column per synchronization channel containing timestamps (e.g., `Arena_TTL`, `L_eye_TTL`, `R_eye_TTL`)
 - **Frame columns:** Corresponding frame number columns with `_frame` suffix (e.g., `Arena_TTL_frame`, `L_eye_TTL_frame`, `R_eye_TTL_frame`)
 
-Example structure:
-```csv
-,Arena_TTL,Arena_TTL_frame,L_eye_TTL,L_eye_TTL_frame,R_eye_TTL,R_eye_TTL_frame
-0,12345.0,0,12346.0,0,12347.0,0
-1,12350.0,1,12351.0,1,12352.0,1
-...
-```
-
 To use a custom synchronization paradigm:
 
 1. Create your `parsed_events.csv` file in the `oe_files/experiment_datetime/` directory
@@ -165,7 +157,7 @@ For detailed examples and advanced usage, see `src/eye_tracking_system_tools/pre
 
 ## Development
 
-This repository is actively maintained. The synchronization module has been migrated to Python 3.10 and tested. Additional modules (annotation/curation, analysis/figure generation) are available and continue to be refined.
+The synchronization module has been migrated to Python 3.10 and tested. Additional modules (annotation/curation, analysis/figure generation) are available and continue to be refined.
 
 ## License
 
