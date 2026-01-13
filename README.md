@@ -2,76 +2,48 @@
 
 Tools for eye-tracking data synchronization, annotation, and analysis.
 
+## Overview
+
+This repository provides tools for synchronizing eye-tracking videos with arena videos and electrophysiology recordings, preprocessing eye-tracking data, and reproducing figures from published research. The synchronization pipeline is designed to work with various recording formats, with Open Ephys provided as a reference implementation.
+
 ## Setup
 
 ### Prerequisites
 
-- Python 3.10.19 or higher (tested with conda environment `eye_repo`)
+- Python 3.10 or higher
 - Conda (recommended) or pip
 
-### Installation
+### Installation Options
 
-1. **Activate existing conda environment** (or create from environment.yml):
-   ```bash
-   conda activate eye_repo
-   # OR if creating new environment:
-   conda env create -f environment.yml
-   conda activate eye_repo
-   ```
+You have three options for setting up the environment:
 
-2. **Install package in development mode**:
-   ```bash
-   pip install -e .
-   ```
+#### Option 1: Using pyproject.toml (Recommended)
 
-3. **Install open-ephys package** (if needed):
-   The `open-ephys` package may need to be installed separately. Try:
-   ```bash
-   pip install open-ephys-analysis-tools
-   ```
-   Or install from GitHub if available.
+```bash
+pip install -e .
+```
 
-### Alternative: pip installation
+This will install the package and all dependencies in development mode.
+
+#### Option 2: Using Conda Environment
+
+```bash
+# Create environment from environment.yml
+conda env create -f environment.yml
+conda activate eye_repo
+
+# Install package in development mode
+pip install -e .
+```
+
+#### Option 3: Using requirements.txt
 
 ```bash
 pip install -r requirements.txt
 pip install -e .
 ```
 
-## Project Structure
-
-```
-src/eye_tracking_system_tools/
-├── preprocessing/     # Data synchronization and preprocessing
-├── figures/          # Figure generation (to be implemented)
-├── io/               # I/O utilities (to be implemented)
-└── utils/            # General utilities (to be implemented)
-```
-
-## Usage
-
-### Synchronization Pipeline
-
-The synchronization module aligns eye-tracking videos with arena videos and Open Ephys recordings.
-
-```python
-from eye_tracking_system_tools.preprocessing import BlockSync
-
-# Initialize block synchronization
-block = BlockSync(
-    animal_call="animal_name",
-    experiment_date="yyyy_mm_dd",
-    block_num="001",
-    path_to_animal_folder="/path/to/data"
-)
-
-# Run synchronization
-block.synchronize_block()
-```
-
-See `src/eye_tracking_system_tools/preprocessing/block_synchronization.ipynb` for detailed examples.
-
-## Testing
+### Verification
 
 Run the smoke test to verify imports:
 
@@ -79,9 +51,121 @@ Run the smoke test to verify imports:
 python examples/smoke_preprocessing_imports.py
 ```
 
+## Project Structure
+
+```
+src/eye_tracking_system_tools/
+├── preprocessing/     # Data synchronization and preprocessing
+├── figures/          # Figure reproduction scripts
+├── io/               # I/O utilities
+└── utils/            # General utilities
+```
+
+## Usage
+
+### Figure Reproduction
+
+The figure reproduction scripts are straightforward to use. Each script in `src/eye_tracking_system_tools/figures/reproduction/main_figures/` can be run directly to reproduce the corresponding paper figure.
+
+**Example:**
+```bash
+cd src/eye_tracking_system_tools/figures/reproduction/main_figures/Fig_1_e
+python figure_1e.py
+```
+
+**Note:** Supplementary figures reproduction is still a work-in-progress.
+
+### Data Preprocessing and Synchronization
+
+The preprocessing module requires data organized in a specific folder structure that matches the `BlockSync` class expectations.
+
+#### Required Data Structure
+
+The `BlockSync` class expects the following folder structure:
+
+```
+path_to_animal_folder/
+└── animal_call/
+    └── experiment_date/  (format: yyyy_mm_dd, or None for no date paradigm)
+        └── block_xxx/
+            ├── arena_videos/          # External arena video outputs
+            ├── eye_videos/
+            │   ├── LE/                 # Left eye videos
+            │   │   └── video_folder/
+            │   │       ├── video.h264  # Video file
+            │   │       ├── video.mp4   # Video file (optional)
+            │   │       ├── DLC_analysis_file.csv  # DeepLabCut pupil annotations
+            │   │       └── timestamps.csv         # Video timestamps
+            │   └── RE/                 # Right eye videos
+            │       └── video_folder/
+            │           ├── video.h264
+            │           ├── video.mp4
+            │           ├── DLC_analysis_file.csv
+            │           └── timestamps.csv
+            ├── oe_files/               # Open Ephys recordings (or custom format)
+            │   └── experiment_datetime/
+            │       ├── events.csv      # Event data (for Open Ephys)
+            │       └── settings.xml    # Recording settings
+            └── analysis/               # Output directory (initially empty)
+```
+
+#### Pupil Annotations
+
+**Important:** This repository does not provide the pupil annotation model. Users must provide their own pupil annotations that adhere to the DeepLabCut `.csv` export format, with one annotation file per eye video.
+
+If you use a different pupil annotation method, you can work around this requirement by converting your annotations to match the DeepLabCut format, or by modifying the preprocessing code to accept your format.
+
+#### Synchronization Pipeline
+
+**Basic Usage:**
+
+```python
+from eye_tracking_system_tools.preprocessing import BlockSync
+
+# Initialize block synchronization
+block = BlockSync(
+    animal_call="animal_name",
+    experiment_date="yyyy_mm_dd",  # or None for no date paradigm
+    block_num="001",
+    path_to_animal_folder="/path/to/data",
+    channeldict=None  # Optional: custom channel mapping
+)
+
+# Parse synchronization events
+block.parse_open_ephys_events()
+
+# Run synchronization
+block.synchronize_block()
+```
+
+**Custom Synchronization Paradigms:**
+
+The synchronization pipeline is not limited to Open Ephys recording formats. While Open Ephys is provided as a reference implementation, users can parse their own synchronization paradigm by creating a `parsed_events.csv` file that matches the expected format.
+
+The `parsed_events.csv` file should be a pandas DataFrame (saved as CSV) with the following structure:
+
+- **Timestamp columns:** One column per synchronization channel containing timestamps (e.g., `Arena_TTL`, `L_eye_TTL`, `R_eye_TTL`)
+- **Frame columns:** Corresponding frame number columns with `_frame` suffix (e.g., `Arena_TTL_frame`, `L_eye_TTL_frame`, `R_eye_TTL_frame`)
+
+Example structure:
+```csv
+,Arena_TTL,Arena_TTL_frame,L_eye_TTL,L_eye_TTL_frame,R_eye_TTL,R_eye_TTL_frame
+0,12345.0,0,12346.0,0,12347.0,0
+1,12350.0,1,12351.0,1,12352.0,1
+...
+```
+
+To use a custom synchronization paradigm:
+
+1. Create your `parsed_events.csv` file in the `oe_files/experiment_datetime/` directory
+2. Ensure it follows the format described above
+3. The `BlockSync` class will automatically detect and use this file if it exists
+
+For detailed examples and advanced usage, see `src/eye_tracking_system_tools/preprocessing/block_synchronization.ipynb`.
+
 ## Development
 
-This repository is under active migration from Python 3.8 to Python 3.10. The synchronization module has been migrated and tested. Additional modules (annotation/curation, analysis/figure generation) will be added incrementally.
+This repository is actively maintained. The synchronization module has been migrated to Python 3.10 and tested. Additional modules (annotation/curation, analysis/figure generation) are available and continue to be refined.
 
 ## License
 
