@@ -11,8 +11,8 @@ from . import _enum_compat
 from open_ephys import analysis as oea
 import scipy.io
 from matplotlib import pyplot as plt
-from .BlockSync_class import *
-from .OERecording import *
+from .BlockSync_class import BlockSync
+from .OERecording import OERecording
 import h5py
 import re
 from lxml import etree as ET
@@ -20,6 +20,7 @@ import scipy.signal as sig
 import pandas as pd
 from scipy.stats import kde
 import bokeh.plotting
+import bokeh
 
 
 def nan_helper(y):
@@ -493,34 +494,76 @@ def data_cleanup(data, bad_indices, interpolate=False):
 def bokeh_plotter(data_list, label_list,
                   plot_name='default',
                   x_axis='X', y_axis='Y',
-                  peaks=None, export_path=False):
+                  peaks=None, peaks_list=False, export_path=False):
     """Generates an interactive Bokeh plot for the given data vector.
+    
+    This is a consolidated, globally compatible version that supports all use cases.
+    Works with both Bokeh 2.x and 3.x.
+    
     Args:
-        data_list (list or array): The data to be plotted.
-        label_list (list of str): The labels of the data vectors
+        data_list (list or array): The data to be plotted. Can be a list of arrays for multiple series.
+        label_list (list of str, optional): The labels of the data vectors. If None, auto-generates labels.
         plot_name (str, optional): The title of the plot. Defaults to 'default'.
         x_axis (str, optional): The label for the x-axis. Defaults to 'X'.
         y_axis (str, optional): The label for the y-axis. Defaults to 'Y'.
-        peaks (list or array, optional): Indices of peaks to highlight on the plot. Defaults to None.
-        export_path (False or str): when set to str, will output the resulting html fig
+        peaks (list or array, optional): Indices of peaks to highlight on the plot. 
+            If peaks_list=True, should be a list of peak arrays (one per data series).
+            If peaks_list=False, should be a single array of peaks applied to the last data series.
+            Defaults to None.
+        peaks_list (bool, optional): If True, treats peaks as a list of peak arrays (one per data series).
+            If False, treats peaks as a single array applied to the last data series. Defaults to False.
+        export_path (False or str or pathlib.Path, optional): When set to a path, will output the 
+            resulting HTML figure to that location. Defaults to False.
+    
+    Returns:
+        None (displays the plot)
     """
+    import numpy as np
+    
     color_cycle = cycle(bokeh.palettes.Category10_10)
-    fig = bokeh.plotting.figure(title=f'bokeh explorer: {plot_name}',
-                                x_axis_label=x_axis,
-                                y_axis_label=y_axis,
-                                plot_width=1500,
-                                plot_height=700)
+    
+    # Try Bokeh 3.x style first (width/height), fall back to 2.x style (plot_width/plot_height)
+    try:
+        fig = bokeh.plotting.figure(title=f'bokeh explorer: {plot_name}',
+                                    x_axis_label=x_axis,
+                                    y_axis_label=y_axis,
+                                    width=1500,
+                                    height=700)
+    except TypeError:
+        # Fall back to Bokeh 2.x style
+        fig = bokeh.plotting.figure(title=f'bokeh explorer: {plot_name}',
+                                    x_axis_label=x_axis,
+                                    y_axis_label=y_axis,
+                                    plot_width=1500,
+                                    plot_height=700)
 
     for i, vec in enumerate(range(len(data_list))):
         color = next(color_cycle)
-        data_vector = data_list[vec]
+        data_vector = np.asarray(data_list[vec])
+        x_axis_data = np.arange(len(data_vector))
+        
         if label_list is None:
-            fig.line(range(len(data_vector)), data_vector, line_color=color, legend_label=f"Line {len(fig.renderers)}")
+            fig.line(x_axis_data, data_vector, line_color=color,
+                     legend_label=f"Line {len(fig.renderers)}")
         elif len(label_list) == len(data_list):
-            fig.line(range(len(data_vector)), data_vector, line_color=color, legend_label=f"{label_list[i]}")
+            fig.line(x_axis_data, data_vector, line_color=color, legend_label=f"{label_list[i]}")
+        
+        # Handle peaks: per-line if peaks_list=True, otherwise handled after loop
+        if peaks is not None and peaks_list is True:
+            if isinstance(peaks, (list, tuple)) and i < len(peaks):
+                peak_array = np.asarray(peaks[i])
+                valid_peaks = peak_array[peak_array < len(data_vector)]
+                if len(valid_peaks) > 0:
+                    fig.circle(valid_peaks, data_vector[valid_peaks], size=10, color=color)
 
-    if peaks is not None:
-        fig.circle(peaks, data_vector[peaks], size=10, color='red')
+    # Handle single peak list (applied to last data series)
+    if peaks is not None and peaks_list is False:
+        if len(data_list) > 0:
+            last_data_vector = np.asarray(data_list[-1])
+            peak_array = np.asarray(peaks)
+            valid_peaks = peak_array[peak_array < len(last_data_vector)]
+            if len(valid_peaks) > 0:
+                fig.circle(valid_peaks, last_data_vector[valid_peaks], size=10, color='red')
 
     if export_path is not False:
         print(f'exporting to {export_path}')

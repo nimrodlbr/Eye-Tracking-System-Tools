@@ -28,6 +28,7 @@ from matplotlib import pyplot as plt
 import bokeh
 from itertools import cycle
 import datetime
+# Note: bokeh_plotter is imported lazily in the static method to avoid circular import
 
 '''
 This script defines the BlockSync class which takes all of the relevant data for a given trial and can be utilized
@@ -35,45 +36,6 @@ to produce a synchronized dataframe for all video sources to be used for further
 '''
 
 # noinspection SpellCheckingInspection
-
-
-def bokeh_plotter(data_list, label_list,
-                  plot_name='default',
-                  x_axis='X', y_axis='Y',
-                  peaks=None, export_path=False):
-    """Generates an interactive Bokeh plot for the given data vector.
-    Args:
-        data_list (list or array): The data to be plotted.
-        label_list (list of str): The labels of the data vectors
-        plot_name (str, optional): The title of the plot. Defaults to 'default'.
-        x_axis (str, optional): The label for the x-axis. Defaults to 'X'.
-        y_axis (str, optional): The label for the y-axis. Defaults to 'Y'.
-        peaks (list or array, optional): Indices of peaks to highlight on the plot. Defaults to None.
-        export_path (False or str): when set to str, will output the resulting html fig
-    """
-    color_cycle = cycle(bokeh.palettes.Category10_10)
-    fig = bokeh.plotting.figure(title=f'bokeh explorer: {plot_name}',
-                                x_axis_label=x_axis,
-                                y_axis_label=y_axis,
-                                width=1500,
-                                height=700)
-
-    for i, vec in enumerate(range(len(data_list))):
-        color = next(color_cycle)
-        data_vector = np.asarray(data_list[vec])
-        x_axis_data = np.arange(len(data_vector))
-        if label_list is None:
-            fig.line(x_axis_data, data_vector, line_color=color, legend_label=f"Line {len(fig.renderers)}")
-        elif len(label_list) == len(data_list):
-            fig.line(x_axis_data, data_vector, line_color=color, legend_label=f"{label_list[i]}")
-
-    if peaks is not None:
-        fig.circle(peaks, data_vector[peaks], size=10, color='red')
-
-    if export_path is not False:
-        print(f'exporting to {export_path}')
-        bokeh.io.output.output_file(filename=str(export_path / f'{plot_name}.html'), title=f'{plot_name}')
-    bokeh.plotting.show(fig)
 
 
 class BlockSync:
@@ -1705,12 +1667,18 @@ class BlockSync:
 
         return result
 
+    # bokeh_plotter is now imported from utility_functions
+    # For backward compatibility, provide a static method that calls the consolidated version
     @staticmethod
     def bokeh_plotter(data_list, label_list,
                       plot_name='default',
                       x_axis='X', y_axis='Y',
                       peaks=None, peaks_list=False, export_path=False):
         """Generates an interactive Bokeh plot for the given data vector.
+        
+        This is a wrapper around the consolidated bokeh_plotter from utility_functions
+        to maintain backward compatibility with existing code that calls BlockSync.bokeh_plotter().
+        
         Args:
             data_list (list or array): The data to be plotted.
             label_list (list of str): The labels of the data vectors
@@ -1718,37 +1686,12 @@ class BlockSync:
             x_axis (str, optional): The label for the x-axis. Defaults to 'X'.
             y_axis (str, optional): The label for the y-axis. Defaults to 'Y'.
             peaks (list or array, optional): Indices of peaks to highlight on the plot. Defaults to None.
+            peaks_list (bool, optional): If True, treats peaks as a list of peak arrays. Defaults to False.
             export_path (False or str): when set to str, will output the resulting html fig
         """
-        color_cycle = cycle(bokeh.palettes.Category10_10)
-        fig = bokeh.plotting.figure(title=f'bokeh explorer: {plot_name}',
-                                    x_axis_label=x_axis,
-                                    y_axis_label=y_axis,
-                                    width=1500,
-                                    height=700)
-
-        for i, vec in enumerate(range(len(data_list))):
-            color = next(color_cycle)
-            data_vector = np.asarray(data_list[vec])
-            x_axis_data = np.arange(len(data_vector))
-            if label_list is None:
-                fig.line(x_axis_data, data_vector, line_color=color,
-                         legend_label=f"Line {len(fig.renderers)}")
-            elif len(label_list) == len(data_list):
-                fig.line(x_axis_data, data_vector, line_color=color, legend_label=f"{label_list[i]}")
-            if peaks is not None and peaks_list is True:
-                fig.circle(peaks[i], data_vector[peaks[i]], size=10, color=color)
-
-        if peaks is not None and peaks_list is False:
-            # Use the last data_vector for single peak list
-            if len(data_list) > 0:
-                last_data_vector = np.asarray(data_list[-1])
-                fig.circle(peaks, last_data_vector[peaks], size=10, color='red')
-
-        if export_path is not False:
-            print(f'exporting to {export_path}')
-            bokeh.io.output.output_file(filename=str(export_path / f'{plot_name}.html'), title=f'{plot_name}')
-        bokeh.plotting.show(fig)
+        # Lazy import to avoid circular dependency (utility_functions imports BlockSync)
+        from .utility_functions import bokeh_plotter as _bokeh_plotter
+        return _bokeh_plotter(data_list, label_list, plot_name, x_axis, y_axis, peaks, peaks_list, export_path)
 
     def collect_lights_out_events(self, data, roll_w_size=1500, plot=False, plot_title='peak detector output'):
         """Identifies potential lights-out events from the given data.
