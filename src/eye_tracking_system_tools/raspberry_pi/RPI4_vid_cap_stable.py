@@ -2,7 +2,7 @@
 # -*- coding: utf-8 -*-
 """
 RPi Camera Recorder with per-frame TTL strobe, live status, optional fixed exposure/ISO,
-and HDMI preview window (automatically maximized via wmctrl).
+and HDMI preview window.
 
 Usage:
   python3 capture_with_prev.py \
