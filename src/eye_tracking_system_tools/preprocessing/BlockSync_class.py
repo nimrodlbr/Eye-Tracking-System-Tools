@@ -3,9 +3,11 @@ import h5py
 import math
 import os
 import pathlib
+from pathlib import Path
 import subprocess as sp
 import cv2
 import numpy as np
+import json
 # IMPORTANT: Import enum compatibility patch FIRST, before open_ephys.analysis
 # This patches enum.StrEnum globally for Python 3.10 compatibility
 from . import _enum_compat
@@ -15,6 +17,7 @@ import scipy.stats as stats
 from bokeh.io import output as b_output
 from bokeh.models import HoverTool
 from bokeh.plotting import figure, show
+from bokeh.palettes import Category10
 from eye_tracking_system_tools.preprocessing.ellipse_fit import LsqEllipse
 from lxml import etree
 from scipy import signal
@@ -25,7 +28,6 @@ from scipy.signal import welch, fftconvolve
 from scipy.stats import zscore as scipy_zscore
 from scipy.signal import find_peaks as scipy_find_peaks
 from matplotlib import pyplot as plt
-import bokeh
 from itertools import cycle
 import datetime
 # Note: bokeh_plotter is imported lazily in the static method to avoid circular import
@@ -637,127 +639,446 @@ class BlockSync:
             with open(export_path, 'wb') as file:
                 pickle.dump(frame_val_dict, file)
 
-    def oe_events_parser(self, open_ephys_csv_path, channel_names, arena_channel_name='Arena_TTL', export_path=None,
-                         auto_break_selection=False):
-        """
+    def oe_events_parser(
+    self,
+    open_ephys_csv_path,
+    channel_names,
+    arena_channel_name: str = "Arena_TTL",
+    export_path=None,
+    auto_break_selection: bool = False,
+    # --- NEW (optional overrides) ---
+    manual_line_map: dict | None = None,   # e.g. {"Arena_TTL": 3, "L_eye_TTL": 1, "R_eye_TTL": 2}
+    arena_window: dict | None = None,      # {"arena_start_timestamp": int, "arena_end_timestamp": int, "arena_start_index": int}
+    gap_threshold_ms: float = 1000.0,      # used by the original "break" paradigm
+):
+    """
+    Parse Open Ephys events.csv (exported from Open Ephys Analysis Tools).
 
-        :param open_ephys_csv_path: The path to an open ephys analysis tools exported csv
-        :param channel_names: a dictionary of the form -
-                        { 1 : 'channel name' (L_eye_camera)
-                          2 : 'channel name' (Arena_TTL)
-                          etc...}
-        :param export_path: default None, if a path is specified a csv file will be saved
-        :param arena_channel_name: the name in channel names which correponds with the arena TTLs
-        :param auto_break_selection: When True, automatically selects the default ttl breaks to use as start/stop frames
-        :returns open_ephys_events: a pandas DataFrame object where each column has the ON events of one channel
-                                    and has a title from channel_names
-        :returns open_ephys_off_events: same but for the OFF states (only important for the logical start-stop signal)
+    Parameters
+    ----------
+    open_ephys_csv_path : str | Path
+        Path to events.csv
+    channel_names : dict
+        Mapping {line_int: "role_name"} (your original channeldict style)
+    arena_channel_name : str
+        Role name used as the anchor TTL stream (default "Arena_TTL")
+    export_path : str | Path | None
+        If provided, save parsed_events.csv here
+    auto_break_selection : bool
+        Original behavior: auto-select break indices if >2 breaks exist
+    manual_line_map : dict | None
+        Optional mapping {"RoleName": line_int}. If provided, overrides channel_names.
+    arena_window : dict | None
+        Optional explicit arena window. If provided, overrides break-detection logic for arena.
+        Keys: arena_start_timestamp, arena_end_timestamp, arena_start_index
+    gap_threshold_ms : float
+        Threshold for detecting breaks in arena TTL stream (original paradigm)
 
-        """
+    Returns
+    -------
+    open_ephys_events : pd.DataFrame
+    arena_start_timestamp : int
+    arena_end_timestamp : int
+    """
 
-        # Infer the active channels:
+    import os
+    import numpy as np
+    import pandas as pd
 
-        # infer the active channels:
-        df = pd.read_csv(open_ephys_csv_path)
-        channels = np.unique(df['line'].to_numpy(copy=True))
-        df_onstate = df[df['state'] == 1]  # cut the df to represent only rising edges
-        ls = []
-        for chan in channels:  # extract a pandas series of the ON stats timestamps for each channel
-            if chan in channel_names.keys():
-                sname = channel_names[chan]
-                s = pd.Series(df_onstate['sample_number'][df_onstate['line'] == chan], name=sname)
-                # If this is the arena channel we need to collect the first and last frames which correspond with
-                # the video itsef (as TTLs are always being transmitted and a pause is expected before the video starts
-                if sname == arena_channel_name:
-                    diff_arr = np.diff(s.values) / (self.sample_rate / 1000)  # milliseconds convention
-                    arena_start_stop = np.where(diff_arr > 1000)[0]
-                    option_count = len(arena_start_stop)
-                    if option_count > 2:
-                        if auto_break_selection is not False:
-                            # max_diff logic:
-                            ind_max_diff = np.argmax(np.diff(arena_start_stop))
-                            start_ind = arena_start_stop[ind_max_diff]
-                            end_ind = arena_start_stop[ind_max_diff + 1]
-                        else:
-                            start_choice_ind = input(f'there is some kind of problem because '
-                                                     f'there should be 2 breaks in the arena TTLs'
-                                                     f'and there are {len(arena_start_stop)}, those indices are: '
-                                                     f'{[s.iloc[i] for i in arena_start_stop]}... '
-                                                     f'choose the index to use as startpoint:')
-                            end_choice_ind = input('choose the index to use as endpoint:')
-                            start_ind = arena_start_stop[start_choice_ind]
-                            end_ind = arena_start_stop[end_choice_ind]
-                        arena_start_timestamp = s.iloc[int(start_ind) + 1]
-                        print(f'arena first frame timestamp: {arena_start_timestamp}')
-                        arena_end_timestamp = s.iloc[int(end_ind)]
-                        print(f'arena end frame timestamp: {arena_end_timestamp}')
-                    elif option_count == 2:
-                        print(f'the arena TTLs are signaling start and stop positions at {arena_start_stop}')
-                        arena_start_timestamp = s.iloc[arena_start_stop[0] + 1]
-                        print(f'arena first frame timestamp: {arena_start_timestamp}')
-                        arena_end_timestamp = s.iloc[arena_start_stop[1]]
-                        print(f'arena end frame timestamp: {arena_end_timestamp}')
-                    elif option_count < 2:
-                        arena_start_stop
+    # --- read source ---
+    df = pd.read_csv(open_ephys_csv_path)
+    channels = np.unique(df["line"].to_numpy(copy=True))
+    df_onstate = df[df["state"] == 1]  # rising edges only
+
+    # --- if user provided role->line map, convert to the expected line->role dict ---
+    if manual_line_map is not None:
+        channel_names = {int(v): str(k) for k, v in manual_line_map.items()}
+
+    ls = []
+
+    # Will be set when arena channel is processed
+    arena_start_stop = None
+    arena_start_timestamp = None
+    arena_end_timestamp = None
+
+    for chan in channels:
+        if chan not in channel_names.keys():
+            continue
+
+        sname = channel_names[chan]
+        s = pd.Series(df_onstate["sample_number"][df_onstate["line"] == chan], name=sname)
+
+        # Arena handling
+        if sname == arena_channel_name:
+            if len(s) < 2:
+                raise ValueError(
+                    f"Arena channel '{arena_channel_name}' (line {chan}) has <2 rising edges; cannot define window."
+                )
+
+            if arena_window is not None:
+                # --- MANUAL OVERRIDE PATH ---
+                arena_start_timestamp = int(arena_window["arena_start_timestamp"])
+                arena_end_timestamp = int(arena_window["arena_end_timestamp"])
+                arena_start_index = int(arena_window["arena_start_index"])
+
+                # sanity: clamp index into [0, len(s)-1]
+                if arena_start_index < 0 or arena_start_index >= len(s):
+                    raise ValueError(
+                        f"arena_start_index={arena_start_index} out of range for arena TTL length={len(s)}."
+                    )
+
+                # arena_start_stop is used later only for frame-zero alignment; mimic the original structure
+                arena_start_stop = np.array([arena_start_index], dtype=int)
+
+                print(f"[manual] arena first frame timestamp: {arena_start_timestamp}")
+                print(f"[manual] arena end frame timestamp: {arena_end_timestamp}")
+
+            else:
+                # --- ORIGINAL AUTO "BREAK" PARADIGM ---
+                diff_arr_ms = np.diff(s.values) / (self.sample_rate / 1000.0)  # ms
+                arena_start_stop = np.where(diff_arr_ms > gap_threshold_ms)[0]
+                option_count = len(arena_start_stop)
+
+                if option_count > 2:
+                    if auto_break_selection:
+                        # max-diff logic (your original approach)
+                        ind_max_diff = int(np.argmax(np.diff(arena_start_stop)))
+                        start_ind = int(arena_start_stop[ind_max_diff])
+                        end_ind = int(arena_start_stop[ind_max_diff + 1])
+                    else:
+                        # interactive (ensure int conversion)
+                        start_choice_ind = int(
+                            input(
+                                f"There should be 2 breaks in arena TTLs but found {option_count}.\n"
+                                f"Break indices: {arena_start_stop.tolist()}\n"
+                                f"Choose WHICH break (0..{option_count-1}) to use as START: "
+                            )
+                        )
+                        end_choice_ind = int(
+                            input(f"Choose WHICH break (0..{option_count-1}) to use as END: ")
+                        )
+                        start_ind = int(arena_start_stop[start_choice_ind])
+                        end_ind = int(arena_start_stop[end_choice_ind])
+
+                    arena_start_timestamp = int(s.iloc[start_ind + 1])
+                    arena_end_timestamp = int(s.iloc[end_ind])
+                    print(f"arena first frame timestamp: {arena_start_timestamp}")
+                    print(f"arena end frame timestamp: {arena_end_timestamp}")
+
+                elif option_count == 2:
+                    print(f"the arena TTLs are signaling start and stop positions at {arena_start_stop}")
+                    arena_start_timestamp = int(s.iloc[int(arena_start_stop[0]) + 1])
+                    arena_end_timestamp = int(s.iloc[int(arena_start_stop[1])])
+                    print(f"arena first frame timestamp: {arena_start_timestamp}")
+                    print(f"arena end frame timestamp: {arena_end_timestamp}")
+
                 else:
-                    print(f'{sname} was not identified as {arena_channel_name}')
-                # create a counter for every rising edge - these should match video frames
-                s_counter = pd.Series(data=np.arange(len(s), dtype='int32'),
-                                      index=s.index.values,
-                                      name=sname + '_frame')
-                ls.append(s)
-                ls.append(s_counter)
-            # concatenate all channels into a dataframe with open-ephys compatible timestamps
-        open_ephys_events = pd.concat(ls, axis=1)
-        # use arena start_stop to clean TTLs counted before video starts and after video ends
-        open_ephys_events[f'{arena_channel_name}_frame'] = open_ephys_events[f'{arena_channel_name}_frame'] - (
-                arena_start_stop[0] + 1)
-        open_ephys_events[f'{arena_channel_name}_frame'][open_ephys_events[f'{arena_channel_name}_frame'] < 0] = np.nan
-        open_ephys_events[f'{arena_channel_name}_frame'][
-            open_ephys_events[f'{arena_channel_name}'] > arena_end_timestamp] = np.nan
+                    # IMPORTANT: fail loudly so the wrapper can catch and launch manual mode
+                    raise ValueError(
+                        f"Could not infer arena start/stop from breaks: found {option_count} gaps > {gap_threshold_ms} ms "
+                        f"for arena_channel_name='{arena_channel_name}' (line {chan})."
+                    )
 
-        if export_path is not None:
-            if export_path not in os.listdir(str(open_ephys_csv_path).split('events.csv')[0][:-1]):
-                open_ephys_events.to_csv(export_path)
+        # Counter per channel (rising edge count)
+        s_counter = pd.Series(
+            data=np.arange(len(s), dtype="int32"),
+            index=s.index.values,
+            name=sname + "_frame"
+        )
 
-        return open_ephys_events, arena_start_timestamp, arena_end_timestamp
+        ls.append(s)
+        ls.append(s_counter)
 
-    def parse_open_ephys_events(self, align_to_zero=True,
-                                auto_break_selection=True,
-                                arena_channel_name='Arena_TTL',
-                                overwrite=False):
+    if len(ls) == 0:
+        raise ValueError(
+            "No TTL channels were parsed (no overlap between events.csv 'line' values and channel_names mapping)."
+        )
+
+    open_ephys_events = pd.concat(ls, axis=1)
+
+    # Ensure arena was found/parsed
+    if arena_start_stop is None or len(arena_start_stop) == 0 or arena_start_timestamp is None or arena_end_timestamp is None:
+        raise ValueError(
+            f"Arena channel '{arena_channel_name}' could not be parsed into a valid window. "
+            f"Provide manual_line_map and arena_window."
+        )
+
+    # Align arena frames to start at 0 (original behavior)
+    open_ephys_events[f"{arena_channel_name}_frame"] = (
+        open_ephys_events[f"{arena_channel_name}_frame"] - (int(arena_start_stop[0]) + 1)
+    )
+
+    # Remove pre-start and post-end arena frames
+    open_ephys_events.loc[open_ephys_events[f"{arena_channel_name}_frame"] < 0, f"{arena_channel_name}_frame"] = np.nan
+    open_ephys_events.loc[open_ephys_events[arena_channel_name] > arena_end_timestamp, f"{arena_channel_name}_frame"] = np.nan
+
+    # Export
+    if export_path is not None:
+        open_ephys_events.to_csv(export_path)
+
+    return open_ephys_events, arena_start_timestamp, arena_end_timestamp
+
+
+    def _summarize_ttl_lines_from_events_csv(self, events_csv_path: Path) -> pd.DataFrame:
+        df = pd.read_csv(events_csv_path)
+        df_on = df[df["state"] == 1].copy()
+
+        out = []
+        for line, g in df_on.groupby("line"):
+            s = g["sample_number"].to_numpy(dtype=np.int64)
+            s.sort()
+            n = len(s)
+            if n < 5:
+                out.append(dict(line=int(line), n_rising=n, est_hz=np.nan, median_dt_ms=np.nan,
+                                t_first_s=float(s[0]/self.sample_rate) if n else np.nan,
+                                t_last_s=float(s[-1]/self.sample_rate) if n else np.nan))
+                continue
+            dt = np.diff(s)
+            med_dt_ms = float(np.median(dt) / (self.sample_rate / 1000.0))
+            est_hz = float(self.sample_rate / np.median(dt))
+            out.append(dict(
+                line=int(line),
+                n_rising=n,
+                est_hz=est_hz,
+                median_dt_ms=med_dt_ms,
+                t_first_s=float(s[0] / self.sample_rate),
+                t_last_s=float(s[-1] / self.sample_rate),
+            ))
+
+        return pd.DataFrame(out).sort_values(["n_rising"], ascending=False).reset_index(drop=True)
+
+
+    def _plot_ttl_raster(self, events_csv_path: Path, max_points_per_line: int = 30000,
+                        title: str = "TTL rising edges (raster)"):
+        df = pd.read_csv(events_csv_path)
+        df_on = df[df["state"] == 1].copy()
+
+        lines = sorted(df_on["line"].unique().tolist())
+        line_to_row = {ln: i for i, ln in enumerate(lines)}
+
+        p = figure(
+            width=1500,
+            height=max(300, 22 * len(lines)),
+            x_axis_label="Time (s)",
+            y_axis_label="TTL line (row index)",
+            title=title,
+            tools="pan,wheel_zoom,box_zoom,reset,save",
+            active_scroll="wheel_zoom"
+        )
+
+        palette = Category10[10]
+        rng = np.random.default_rng(0)
+
+        for i, ln in enumerate(lines):
+            s = df_on.loc[df_on["line"] == ln, "sample_number"].to_numpy(dtype=np.int64)
+            s.sort()
+            if len(s) > max_points_per_line:
+                idx = rng.choice(len(s), size=max_points_per_line, replace=False)
+                s = np.sort(s[idx])
+
+            t = s / float(self.sample_rate)
+            y = np.full_like(t, fill_value=line_to_row[ln], dtype=float)
+            p.circle(t, y, size=3, alpha=0.55, color=palette[i % len(palette)], legend_label=f"line {ln}")
+
+        p.add_tools(HoverTool(tooltips=[("time (s)", "$x{0.000}"), ("row", "$y{0}")]))
+        p.legend.click_policy = "hide"
+        show(p)
+        return p
+
+
+    def _manual_ttl_map_and_window(
+        self,
+        events_csv_path: Path,
+        arena_channel_name: str = "Arena_TTL",
+        required_roles=("Arena_TTL", "L_eye_TTL", "R_eye_TTL"),
+        save_sidecar: bool = True,
+    ) -> tuple[dict, dict]:
         """
-        Gets the sample rate from the settings.xml file
-        Creates the parsed_events.csv file
-        finds the first and last frame timestamps for each video source
-
+        Interactive fallback:
+        1) show summary + raster
+        2) ask user to map roles -> lines
+        3) ask user to choose arena start/end (by rising-edge index or sample_number)
+        Returns:
+        manual_line_map: {role_name: line_int}
+        arena_window: {"arena_start_timestamp": int, "arena_end_timestamp": int, "arena_start_index": int}
         """
+        events_csv_path = Path(events_csv_path)
 
-        print('running parse_open_ephys_events...')
-        if overwrite is False and (self.oe_path.parent / 'parsed_events.csv').is_file():
-            print(f'block {self.block_num} has a parsed events file, reading...')
-            self.oe_events = pd.read_csv(str((self.oe_path.parent / 'parsed_events.csv')), index_col=0)
-            self.arena_vid_first_t = \
-                self.oe_events[self.oe_events[str(arena_channel_name + '_frame')] == 0]['Arena_TTL'].values[0]
+        summary = self._summarize_ttl_lines_from_events_csv(events_csv_path)
+        print("\nTTL line summary (rising edges):")
+        print(summary.to_string(index=False))
 
-            last_frame = np.nanmax(self.oe_events[str(arena_channel_name + '_frame')].values)
-            self.arena_vid_last_t = \
-                self.oe_events[self.oe_events[str(arena_channel_name + '_frame')] == last_frame]['Arena_TTL'].values[0]
+        print("\nOpening raster plot (toggle lines via legend click)...")
+        self._plot_ttl_raster(events_csv_path, title=f"{self.block_name} TTL raster")
+
+        # --- role mapping ---
+        print("\nManual mapping: assign Open Ephys digital 'line' numbers to roles.")
+        manual_line_map = {}
+        for role in required_roles:
+            val = input(f"Enter line number for {role} (or blank to skip): ").strip()
+            if val != "":
+                manual_line_map[role] = int(val)
+
+        # allow additional optional roles
+        while True:
+            more = input("Add another role mapping? (y/n): ").strip().lower()
+            if more != "y":
+                break
+            role = input("Role name (e.g., LED_driver, Stim_TTL): ").strip()
+            line = int(input(f"Line number for {role}: ").strip())
+            manual_line_map[role] = line
+
+        if arena_channel_name not in manual_line_map:
+            raise ValueError(f"You must map {arena_channel_name} for manual window selection.")
+
+        # --- arena window selection ---
+        df = pd.read_csv(events_csv_path)
+        df_on = df[(df["state"] == 1) & (df["line"] == manual_line_map[arena_channel_name])].copy()
+        arena_samples = df_on["sample_number"].to_numpy(dtype=np.int64)
+        arena_samples.sort()
+
+        if len(arena_samples) < 2:
+            raise ValueError(f"Arena line {manual_line_map[arena_channel_name]} has too few rising edges.")
+
+        print(f"\nArena line {manual_line_map[arena_channel_name]} has {len(arena_samples)} rising edges.")
+        print("Choose arena sync window.\n"
+            "You can specify by rising-edge INDEX (0..N-1) or by SAMPLE_NUMBER.\n")
+
+        mode = input("Window selection mode: 'i' (index) or 's' (sample_number) [i]: ").strip().lower() or "i"
+
+        if mode == "i":
+            start_i = int(input("Start rising-edge index (e.g., 0): ").strip())
+            end_i = int(input("End rising-edge index (e.g., N-1): ").strip())
+            arena_start_timestamp = int(arena_samples[start_i])
+            arena_end_timestamp = int(arena_samples[end_i])
+            arena_start_index = start_i
         else:
-            # First, create the events.csv file:
+            arena_start_timestamp = int(input("Start SAMPLE_NUMBER: ").strip())
+            arena_end_timestamp = int(input("End SAMPLE_NUMBER: ").strip())
+            # compute arena_start_index as closest edge >= start timestamp
+            arena_start_index = int(np.searchsorted(arena_samples, arena_start_timestamp, side="left"))
+
+        arena_window = dict(
+            arena_start_timestamp=arena_start_timestamp,
+            arena_end_timestamp=arena_end_timestamp,
+            arena_start_index=arena_start_index
+        )
+
+        print("\nManual selection:")
+        print("manual_line_map =", manual_line_map)
+        print("arena_window    =", arena_window)
+
+        if save_sidecar:
+            sidecar = events_csv_path.parent / "ttl_manual_mapping.json"
+            payload = {
+                "block_path": str(self.block_path),
+                "events_csv": str(events_csv_path),
+                "sample_rate": float(self.sample_rate),
+                "manual_line_map": manual_line_map,
+                "arena_window": arena_window,
+            }
+            sidecar.write_text(json.dumps(payload, indent=2))
+            print(f"Saved manual mapping sidecar: {sidecar}")
+
+        return manual_line_map, arena_window
+
+    def parse_open_ephys_events(
+        self,
+        align_to_zero: bool = True,
+        auto_break_selection: bool = True,
+        arena_channel_name: str = "Arena_TTL",
+        overwrite: bool = False,
+        # --- NEW ---
+        interactive_on_fail: bool = True,
+        gap_threshold_ms: float = 1000.0,
+    ):
+        """
+        Wrapper that:
+        1) tries the original auto-break parsing paradigm
+        2) if it fails and interactive_on_fail=True, launches manual TTL mapping + window selection
+            (via self._manual_ttl_map_and_window), then re-parses with overrides.
+        """
+
+        import numpy as np
+        import pandas as pd
+
+        print("running parse_open_ephys_events...")
+
+        parsed_path = self.oe_path.parent / "parsed_events.csv"
+
+        if overwrite is False and parsed_path.is_file():
+            print(f"block {self.block_num} has a parsed events file, reading...")
+            self.oe_events = pd.read_csv(str(parsed_path), index_col=0)
+
+            z0 = self.oe_events[self.oe_events[str(arena_channel_name + "_frame")] == 0]
+            if len(z0) == 0:
+                raise ValueError(
+                    f"Existing parsed_events.csv has no {arena_channel_name}_frame == 0. "
+                    f"Re-run with overwrite=True."
+                )
+            self.arena_vid_first_t = z0[arena_channel_name].values[0]
+
+            last_frame = np.nanmax(self.oe_events[str(arena_channel_name + "_frame")].values)
+            zL = self.oe_events[self.oe_events[str(arena_channel_name + "_frame")] == last_frame]
+            if len(zL) == 0:
+                raise ValueError("Existing parsed_events.csv cannot find timestamp for last arena frame.")
+            self.arena_vid_last_t = zL[arena_channel_name].values[0]
+
+        else:
+            # Create events.csv
             self.oe_events_to_csv(align_to_zero=align_to_zero)
 
-            # Now work on the parsed_events file and export it
-            ex_path = self.block_path / rf'oe_files' / self.exp_date_time / 'parsed_events.csv'
-            self.oe_events, self.arena_vid_first_t, self.arena_vid_last_t = self.oe_events_parser(
-                self.block_path / rf'oe_files' / self.exp_date_time / 'events.csv',
-                self.channeldict,
-                export_path=ex_path, auto_break_selection=auto_break_selection)
-            print(f'created {ex_path}')
-        self.l_vid_first_t = self.oe_events['R_eye_TTL'].loc[self.oe_events['R_eye_TTL_frame'].idxmin()]
-        self.l_vid_last_t = self.oe_events['R_eye_TTL'].loc[self.oe_events['R_eye_TTL_frame'].idxmax()]
-        self.r_vid_first_t = self.oe_events['L_eye_TTL'].loc[self.oe_events['L_eye_TTL_frame'].idxmin()]
-        self.r_vid_last_t = self.oe_events['L_eye_TTL'].loc[self.oe_events['L_eye_TTL_frame'].idxmax()]
+            events_csv_path = self.block_path / "oe_files" / self.exp_date_time / "events.csv"
+            ex_path = self.block_path / "oe_files" / self.exp_date_time / "parsed_events.csv"
+
+            try:
+                # ---- AUTO PATH (original paradigm) ----
+                self.oe_events, self.arena_vid_first_t, self.arena_vid_last_t = self.oe_events_parser(
+                    events_csv_path,
+                    self.channeldict,
+                    arena_channel_name=arena_channel_name,
+                    export_path=ex_path,
+                    auto_break_selection=auto_break_selection,
+                    manual_line_map=None,
+                    arena_window=None,
+                    gap_threshold_ms=gap_threshold_ms,
+                )
+                print(f"created {ex_path} (auto)")
+
+            except Exception as e:
+                print("\n[AUTO PARSE FAILED]")
+                print(f"Reason: {repr(e)}")
+
+                if not interactive_on_fail:
+                    raise
+
+                # ---- MANUAL FALLBACK ----
+                # NOTE: this method must exist on the class (as added previously)
+                manual_line_map, arena_window = self._manual_ttl_map_and_window(
+                    events_csv_path,
+                    arena_channel_name=arena_channel_name,
+                    required_roles=("Arena_TTL", "L_eye_TTL", "R_eye_TTL"),
+                    save_sidecar=True,
+                )
+
+                self.oe_events, self.arena_vid_first_t, self.arena_vid_last_t = self.oe_events_parser(
+                    events_csv_path,
+                    self.channeldict,
+                    arena_channel_name=arena_channel_name,
+                    export_path=ex_path,
+                    auto_break_selection=False,  # irrelevant when arena_window is provided
+                    manual_line_map=manual_line_map,
+                    arena_window=arena_window,
+                    gap_threshold_ms=gap_threshold_ms,
+                )
+                print(f"created {ex_path} (manual override)")
+
+        # Keep your existing downstream behavior (even though naming looks swapped)
+        self.l_vid_first_t = self.oe_events["R_eye_TTL"].loc[self.oe_events["R_eye_TTL_frame"].idxmin()]
+        self.l_vid_last_t = self.oe_events["R_eye_TTL"].loc[self.oe_events["R_eye_TTL_frame"].idxmax()]
+        self.r_vid_first_t = self.oe_events["L_eye_TTL"].loc[self.oe_events["L_eye_TTL_frame"].idxmin()]
+        self.r_vid_last_t = self.oe_events["L_eye_TTL"].loc[self.oe_events["L_eye_TTL_frame"].idxmax()]
+
 
     @staticmethod
     def get_closest_frame(timestamp, vid_timeseries, report_acc=None):
