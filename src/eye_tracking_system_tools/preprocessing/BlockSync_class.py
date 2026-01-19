@@ -433,54 +433,6 @@ class BlockSync:
         self.re_videos = [vid for vid in glob.glob(str(self.block_path) + r'\eye_videos\RE\**\*.mp4') if
                           "DLC" not in vid]
 
-    def get_eye_brightness_vectors_deprecated(self, threshold_value=30, export=True):
-        """
-        DEPRECATED: Use load_eye_brightness_vectors() instead.
-        
-        This method is kept for backward compatibility but is no longer recommended.
-        The new load_eye_brightness_vectors() method provides improved functionality.
-        
-        This is a utility function that generates the eye brightness vectors for later synchronization.
-        This step should be performed by a long looper over all data before synchronization.
-        
-        :param threshold_value: The threshold value to use as mask before calculating brightness
-        :param export: if true will export the vectors into two .csv files
-        :return: /
-        """
-        print(f'getting eye brigtness values for block {self.block_num}...')
-        if self.le_videos is None:
-            self.le_videos = [vid for vid in glob.glob(str(self.block_path) + r'\eye_videos\LE\**\*.mp4') if
-                              "DLC" not in vid]
-        if self.re_videos is None:
-            self.re_videos = [vid for vid in glob.glob(str(self.block_path) + r'\eye_videos\RE\**\*.mp4') if
-                              "DLC" not in vid]
-        p = self.analysis_path / 'eye_brightness_values_dict.pkl'
-        if p.is_file():
-            print('found a file!')
-            with open(self.analysis_path / 'eye_brightness_values_dict.pkl', 'rb') as file:
-                eye_brightness_dict = pickle.load(file)
-                if self.le_frame_val_list is None:
-                    self.le_frame_val_list = eye_brightness_dict['left_eye']
-                if self.re_frame_val_list is None:
-                    self.re_frame_val_list = eye_brightness_dict['right_eye']
-        else:
-            print()
-            answer = input('no eye brigtness file exists, want to make it? (no / any other answer)')
-            if answer == 'no':
-                return
-            self.le_frame_val_list = self.produce_frame_val_list(self.le_videos, threshold_value=threshold_value)
-            self.re_frame_val_list = self.produce_frame_val_list(self.re_videos, threshold_value=threshold_value)
-            if export:
-                export_path = p
-                frame_val_dict = {
-
-                    'left_eye': self.le_frame_val_list,
-                    'right_eye': self.re_frame_val_list
-                }
-
-                with open(export_path, 'wb') as file:
-                    pickle.dump(frame_val_dict, file)
-
     @staticmethod
     def produce_frame_val_list_with_roi(vid_path, roi, threshold_value):
         """
@@ -640,183 +592,179 @@ class BlockSync:
                 pickle.dump(frame_val_dict, file)
 
     def oe_events_parser(
-    self,
-    open_ephys_csv_path,
-    channel_names,
-    arena_channel_name: str = "Arena_TTL",
-    export_path=None,
-    auto_break_selection: bool = False,
-    # --- NEW (optional overrides) ---
-    manual_line_map: dict | None = None,   # e.g. {"Arena_TTL": 3, "L_eye_TTL": 1, "R_eye_TTL": 2}
-    arena_window: dict | None = None,      # {"arena_start_timestamp": int, "arena_end_timestamp": int, "arena_start_index": int}
-    gap_threshold_ms: float = 1000.0,      # used by the original "break" paradigm
-):
-    """
-    Parse Open Ephys events.csv (exported from Open Ephys Analysis Tools).
+        self,
+        open_ephys_csv_path,
+        channel_names,
+        arena_channel_name: str = "Arena_TTL",
+        export_path=None,
+        auto_break_selection: bool = False,
+        # --- NEW (optional overrides) ---
+        manual_line_map: dict | None = None,   # e.g. {"Arena_TTL": 3, "L_eye_TTL": 1, "R_eye_TTL": 2}
+        arena_window: dict | None = None,      # {"arena_start_timestamp": int, "arena_end_timestamp": int, "arena_start_index": int}
+        gap_threshold_ms: float = 1000.0):      # used by the original "break" paradigm
+        
+        """
+        Parse Open Ephys events.csv (exported from Open Ephys Analysis Tools).
 
-    Parameters
-    ----------
-    open_ephys_csv_path : str | Path
-        Path to events.csv
-    channel_names : dict
-        Mapping {line_int: "role_name"} (your original channeldict style)
-    arena_channel_name : str
-        Role name used as the anchor TTL stream (default "Arena_TTL")
-    export_path : str | Path | None
-        If provided, save parsed_events.csv here
-    auto_break_selection : bool
-        Original behavior: auto-select break indices if >2 breaks exist
-    manual_line_map : dict | None
-        Optional mapping {"RoleName": line_int}. If provided, overrides channel_names.
-    arena_window : dict | None
-        Optional explicit arena window. If provided, overrides break-detection logic for arena.
-        Keys: arena_start_timestamp, arena_end_timestamp, arena_start_index
-    gap_threshold_ms : float
-        Threshold for detecting breaks in arena TTL stream (original paradigm)
+        Parameters
+        ----------
+        open_ephys_csv_path : str | Path
+            Path to events.csv
+        channel_names : dict
+            Mapping {line_int: "role_name"} (your original channeldict style)
+        arena_channel_name : str
+            Role name used as the anchor TTL stream (default "Arena_TTL")
+        export_path : str | Path | None
+            If provided, save parsed_events.csv here
+        auto_break_selection : bool
+            Original behavior: auto-select break indices if >2 breaks exist
+        manual_line_map : dict | None
+            Optional mapping {"RoleName": line_int}. If provided, overrides channel_names.
+        arena_window : dict | None
+            Optional explicit arena window. If provided, overrides break-detection logic for arena.
+            Keys: arena_start_timestamp, arena_end_timestamp, arena_start_index
+        gap_threshold_ms : float
+            Threshold for detecting breaks in arena TTL stream (original paradigm)
 
-    Returns
-    -------
-    open_ephys_events : pd.DataFrame
-    arena_start_timestamp : int
-    arena_end_timestamp : int
-    """
+        Returns
+        -------
+        open_ephys_events : pd.DataFrame
+        arena_start_timestamp : int
+        arena_end_timestamp : int
+        """
 
-    import os
-    import numpy as np
-    import pandas as pd
+        # --- read source ---
+        df = pd.read_csv(open_ephys_csv_path)
+        channels = np.unique(df["line"].to_numpy(copy=True))
+        df_onstate = df[df["state"] == 1]  # rising edges only
 
-    # --- read source ---
-    df = pd.read_csv(open_ephys_csv_path)
-    channels = np.unique(df["line"].to_numpy(copy=True))
-    df_onstate = df[df["state"] == 1]  # rising edges only
+        # --- if user provided role->line map, convert to the expected line->role dict ---
+        if manual_line_map is not None:
+            channel_names = {int(v): str(k) for k, v in manual_line_map.items()}
 
-    # --- if user provided role->line map, convert to the expected line->role dict ---
-    if manual_line_map is not None:
-        channel_names = {int(v): str(k) for k, v in manual_line_map.items()}
+        ls = []
 
-    ls = []
+        # Will be set when arena channel is processed
+        arena_start_stop = None
+        arena_start_timestamp = None
+        arena_end_timestamp = None
 
-    # Will be set when arena channel is processed
-    arena_start_stop = None
-    arena_start_timestamp = None
-    arena_end_timestamp = None
+        for chan in channels:
+            if chan not in channel_names.keys():
+                continue
 
-    for chan in channels:
-        if chan not in channel_names.keys():
-            continue
+            sname = channel_names[chan]
+            s = pd.Series(df_onstate["sample_number"][df_onstate["line"] == chan], name=sname)
 
-        sname = channel_names[chan]
-        s = pd.Series(df_onstate["sample_number"][df_onstate["line"] == chan], name=sname)
-
-        # Arena handling
-        if sname == arena_channel_name:
-            if len(s) < 2:
-                raise ValueError(
-                    f"Arena channel '{arena_channel_name}' (line {chan}) has <2 rising edges; cannot define window."
-                )
-
-            if arena_window is not None:
-                # --- MANUAL OVERRIDE PATH ---
-                arena_start_timestamp = int(arena_window["arena_start_timestamp"])
-                arena_end_timestamp = int(arena_window["arena_end_timestamp"])
-                arena_start_index = int(arena_window["arena_start_index"])
-
-                # sanity: clamp index into [0, len(s)-1]
-                if arena_start_index < 0 or arena_start_index >= len(s):
+            # Arena handling
+            if sname == arena_channel_name:
+                if len(s) < 2:
                     raise ValueError(
-                        f"arena_start_index={arena_start_index} out of range for arena TTL length={len(s)}."
+                        f"Arena channel '{arena_channel_name}' (line {chan}) has <2 rising edges; cannot define window."
                     )
 
-                # arena_start_stop is used later only for frame-zero alignment; mimic the original structure
-                arena_start_stop = np.array([arena_start_index], dtype=int)
+                if arena_window is not None:
+                    # --- MANUAL OVERRIDE PATH ---
+                    arena_start_timestamp = int(arena_window["arena_start_timestamp"])
+                    arena_end_timestamp = int(arena_window["arena_end_timestamp"])
+                    arena_start_index = int(arena_window["arena_start_index"])
 
-                print(f"[manual] arena first frame timestamp: {arena_start_timestamp}")
-                print(f"[manual] arena end frame timestamp: {arena_end_timestamp}")
-
-            else:
-                # --- ORIGINAL AUTO "BREAK" PARADIGM ---
-                diff_arr_ms = np.diff(s.values) / (self.sample_rate / 1000.0)  # ms
-                arena_start_stop = np.where(diff_arr_ms > gap_threshold_ms)[0]
-                option_count = len(arena_start_stop)
-
-                if option_count > 2:
-                    if auto_break_selection:
-                        # max-diff logic (your original approach)
-                        ind_max_diff = int(np.argmax(np.diff(arena_start_stop)))
-                        start_ind = int(arena_start_stop[ind_max_diff])
-                        end_ind = int(arena_start_stop[ind_max_diff + 1])
-                    else:
-                        # interactive (ensure int conversion)
-                        start_choice_ind = int(
-                            input(
-                                f"There should be 2 breaks in arena TTLs but found {option_count}.\n"
-                                f"Break indices: {arena_start_stop.tolist()}\n"
-                                f"Choose WHICH break (0..{option_count-1}) to use as START: "
-                            )
+                    # sanity: clamp index into [0, len(s)-1]
+                    if arena_start_index < 0 or arena_start_index >= len(s):
+                        raise ValueError(
+                            f"arena_start_index={arena_start_index} out of range for arena TTL length={len(s)}."
                         )
-                        end_choice_ind = int(
-                            input(f"Choose WHICH break (0..{option_count-1}) to use as END: ")
-                        )
-                        start_ind = int(arena_start_stop[start_choice_ind])
-                        end_ind = int(arena_start_stop[end_choice_ind])
 
-                    arena_start_timestamp = int(s.iloc[start_ind + 1])
-                    arena_end_timestamp = int(s.iloc[end_ind])
-                    print(f"arena first frame timestamp: {arena_start_timestamp}")
-                    print(f"arena end frame timestamp: {arena_end_timestamp}")
+                    # arena_start_stop is used later only for frame-zero alignment; mimic the original structure
+                    arena_start_stop = np.array([arena_start_index], dtype=int)
 
-                elif option_count == 2:
-                    print(f"the arena TTLs are signaling start and stop positions at {arena_start_stop}")
-                    arena_start_timestamp = int(s.iloc[int(arena_start_stop[0]) + 1])
-                    arena_end_timestamp = int(s.iloc[int(arena_start_stop[1])])
-                    print(f"arena first frame timestamp: {arena_start_timestamp}")
-                    print(f"arena end frame timestamp: {arena_end_timestamp}")
+                    print(f"[manual] arena first frame timestamp: {arena_start_timestamp}")
+                    print(f"[manual] arena end frame timestamp: {arena_end_timestamp}")
 
                 else:
-                    # IMPORTANT: fail loudly so the wrapper can catch and launch manual mode
-                    raise ValueError(
-                        f"Could not infer arena start/stop from breaks: found {option_count} gaps > {gap_threshold_ms} ms "
-                        f"for arena_channel_name='{arena_channel_name}' (line {chan})."
-                    )
+                    # --- ORIGINAL AUTO "BREAK" PARADIGM ---
+                    diff_arr_ms = np.diff(s.values) / (self.sample_rate / 1000.0)  # ms
+                    arena_start_stop = np.where(diff_arr_ms > gap_threshold_ms)[0]
+                    option_count = len(arena_start_stop)
 
-        # Counter per channel (rising edge count)
-        s_counter = pd.Series(
-            data=np.arange(len(s), dtype="int32"),
-            index=s.index.values,
-            name=sname + "_frame"
+                    if option_count > 2:
+                        if auto_break_selection:
+                            # max-diff logic (your original approach)
+                            ind_max_diff = int(np.argmax(np.diff(arena_start_stop)))
+                            start_ind = int(arena_start_stop[ind_max_diff])
+                            end_ind = int(arena_start_stop[ind_max_diff + 1])
+                        else:
+                            # interactive (ensure int conversion)
+                            start_choice_ind = int(
+                                input(
+                                    f"There should be 2 breaks in arena TTLs but found {option_count}.\n"
+                                    f"Break indices: {arena_start_stop.tolist()}\n"
+                                    f"Choose WHICH break (0..{option_count-1}) to use as START: "
+                                )
+                            )
+                            end_choice_ind = int(
+                                input(f"Choose WHICH break (0..{option_count-1}) to use as END: ")
+                            )
+                            start_ind = int(arena_start_stop[start_choice_ind])
+                            end_ind = int(arena_start_stop[end_choice_ind])
+
+                        arena_start_timestamp = int(s.iloc[start_ind + 1])
+                        arena_end_timestamp = int(s.iloc[end_ind])
+                        print(f"arena first frame timestamp: {arena_start_timestamp}")
+                        print(f"arena end frame timestamp: {arena_end_timestamp}")
+
+                    elif option_count == 2:
+                        print(f"the arena TTLs are signaling start and stop positions at {arena_start_stop}")
+                        arena_start_timestamp = int(s.iloc[int(arena_start_stop[0]) + 1])
+                        arena_end_timestamp = int(s.iloc[int(arena_start_stop[1])])
+                        print(f"arena first frame timestamp: {arena_start_timestamp}")
+                        print(f"arena end frame timestamp: {arena_end_timestamp}")
+
+                    else:
+                        # IMPORTANT: fail loudly so the wrapper can catch and launch manual mode
+                        raise ValueError(
+                            f"Could not infer arena start/stop from breaks: found {option_count} gaps > {gap_threshold_ms} ms "
+                            f"for arena_channel_name='{arena_channel_name}' (line {chan})."
+                        )
+
+            # Counter per channel (rising edge count)
+            s_counter = pd.Series(
+                data=np.arange(len(s), dtype="int32"),
+                index=s.index.values,
+                name=sname + "_frame"
+            )
+
+            ls.append(s)
+            ls.append(s_counter)
+
+        if len(ls) == 0:
+            raise ValueError(
+                "No TTL channels were parsed (no overlap between events.csv 'line' values and channel_names mapping)."
+            )
+
+        open_ephys_events = pd.concat(ls, axis=1)
+
+        # Ensure arena was found/parsed
+        if arena_start_stop is None or len(arena_start_stop) == 0 or arena_start_timestamp is None or arena_end_timestamp is None:
+            raise ValueError(
+                f"Arena channel '{arena_channel_name}' could not be parsed into a valid window. "
+                f"Provide manual_line_map and arena_window."
+            )
+
+        # Align arena frames to start at 0 (original behavior)
+        open_ephys_events[f"{arena_channel_name}_frame"] = (
+            open_ephys_events[f"{arena_channel_name}_frame"] - (int(arena_start_stop[0]) + 1)
         )
 
-        ls.append(s)
-        ls.append(s_counter)
+        # Remove pre-start and post-end arena frames
+        open_ephys_events.loc[open_ephys_events[f"{arena_channel_name}_frame"] < 0, f"{arena_channel_name}_frame"] = np.nan
+        open_ephys_events.loc[open_ephys_events[arena_channel_name] > arena_end_timestamp, f"{arena_channel_name}_frame"] = np.nan
 
-    if len(ls) == 0:
-        raise ValueError(
-            "No TTL channels were parsed (no overlap between events.csv 'line' values and channel_names mapping)."
-        )
+        # Export
+        if export_path is not None:
+            open_ephys_events.to_csv(export_path)
 
-    open_ephys_events = pd.concat(ls, axis=1)
-
-    # Ensure arena was found/parsed
-    if arena_start_stop is None or len(arena_start_stop) == 0 or arena_start_timestamp is None or arena_end_timestamp is None:
-        raise ValueError(
-            f"Arena channel '{arena_channel_name}' could not be parsed into a valid window. "
-            f"Provide manual_line_map and arena_window."
-        )
-
-    # Align arena frames to start at 0 (original behavior)
-    open_ephys_events[f"{arena_channel_name}_frame"] = (
-        open_ephys_events[f"{arena_channel_name}_frame"] - (int(arena_start_stop[0]) + 1)
-    )
-
-    # Remove pre-start and post-end arena frames
-    open_ephys_events.loc[open_ephys_events[f"{arena_channel_name}_frame"] < 0, f"{arena_channel_name}_frame"] = np.nan
-    open_ephys_events.loc[open_ephys_events[arena_channel_name] > arena_end_timestamp, f"{arena_channel_name}_frame"] = np.nan
-
-    # Export
-    if export_path is not None:
-        open_ephys_events.to_csv(export_path)
-
-    return open_ephys_events, arena_start_timestamp, arena_end_timestamp
+        return open_ephys_events, arena_start_timestamp, arena_end_timestamp
 
 
     def _summarize_ttl_lines_from_events_csv(self, events_csv_path: Path) -> pd.DataFrame:
@@ -885,6 +833,44 @@ class BlockSync:
         show(p)
         return p
 
+    def _parse_edge_index(self, s: str, n_edges: int) -> int:
+        """
+        Parse user input for an edge index.
+        Accepts:
+        - integers: "0", "123"
+        - negative python indices: "-1" (last), "-2", ...
+        - tokens: "N-1", "n-1", "last", "end"
+        - "N" or "n" will be interpreted as N-1 (common user intent)
+        Returns a valid index in [0, n_edges-1].
+        """
+        raw = (s or "").strip().lower()
+        if raw in ("last", "end"):
+            return n_edges - 1
+        if raw in ("n-1", "n − 1", "n–1", "n—1", "n - 1"):
+            return n_edges - 1
+        if raw in ("n",):
+            return n_edges - 1
+
+        # handle forms like "N-1" (allow unicode minus variants/spaces)
+        if raw.replace(" ", "") in ("n-1", "n−1", "n–1", "n—1"):
+            return n_edges - 1
+
+        # plain integer?
+        try:
+            idx = int(raw)
+        except ValueError:
+            raise ValueError(
+                f"Could not parse index '{s}'. Use an integer (e.g., 0, 15, -1) or 'last' / 'N-1'."
+            )
+
+        # python-style negative indices
+        if idx < 0:
+            idx = n_edges + idx  # e.g. -1 => n_edges-1
+
+        if idx < 0 or idx >= n_edges:
+            raise ValueError(f"Index {idx} out of range for N={n_edges} rising edges (valid: 0..{n_edges-1}).")
+
+        return idx
 
     def _manual_ttl_map_and_window(
         self,
@@ -909,7 +895,7 @@ class BlockSync:
         print(summary.to_string(index=False))
 
         print("\nOpening raster plot (toggle lines via legend click)...")
-        self._plot_ttl_raster(events_csv_path, title=f"{self.block_name} TTL raster")
+        self._plot_ttl_raster(events_csv_path, title=f"{self.block_num} TTL raster")
 
         # --- role mapping ---
         print("\nManual mapping: assign Open Ephys digital 'line' numbers to roles.")
@@ -947,11 +933,19 @@ class BlockSync:
         mode = input("Window selection mode: 'i' (index) or 's' (sample_number) [i]: ").strip().lower() or "i"
 
         if mode == "i":
-            start_i = int(input("Start rising-edge index (e.g., 0): ").strip())
-            end_i = int(input("End rising-edge index (e.g., N-1): ").strip())
+            start_raw = input("Start rising-edge index (e.g., 0): ").strip()
+            end_raw = input("End rising-edge index (e.g., -1, last, N-1): ").strip()
+
+            start_i = self._parse_edge_index(start_raw, n_edges=len(arena_samples))
+            end_i = self._parse_edge_index(end_raw, n_edges=len(arena_samples))
+
+            if end_i < start_i:
+                raise ValueError(f"End index ({end_i}) is before start index ({start_i}).")
+
             arena_start_timestamp = int(arena_samples[start_i])
             arena_end_timestamp = int(arena_samples[end_i])
             arena_start_index = start_i
+                
         else:
             arena_start_timestamp = int(input("Start SAMPLE_NUMBER: ").strip())
             arena_end_timestamp = int(input("End SAMPLE_NUMBER: ").strip())
@@ -1993,32 +1987,6 @@ class BlockSync:
         result = np.concatenate([result, zscores_last])
 
         return result
-
-    # bokeh_plotter is now imported from utility_functions
-    # For backward compatibility, provide a static method that calls the consolidated version
-    @staticmethod
-    def bokeh_plotter(data_list, label_list,
-                      plot_name='default',
-                      x_axis='X', y_axis='Y',
-                      peaks=None, peaks_list=False, export_path=False):
-        """Generates an interactive Bokeh plot for the given data vector.
-        
-        This is a wrapper around the consolidated bokeh_plotter from utility_functions
-        to maintain backward compatibility with existing code that calls BlockSync.bokeh_plotter().
-        
-        Args:
-            data_list (list or array): The data to be plotted.
-            label_list (list of str): The labels of the data vectors
-            plot_name (str, optional): The title of the plot. Defaults to 'default'.
-            x_axis (str, optional): The label for the x-axis. Defaults to 'X'.
-            y_axis (str, optional): The label for the y-axis. Defaults to 'Y'.
-            peaks (list or array, optional): Indices of peaks to highlight on the plot. Defaults to None.
-            peaks_list (bool, optional): If True, treats peaks as a list of peak arrays. Defaults to False.
-            export_path (False or str): when set to str, will output the resulting html fig
-        """
-        # Lazy import to avoid circular dependency (utility_functions imports BlockSync)
-        from .utility_functions import bokeh_plotter as _bokeh_plotter
-        return _bokeh_plotter(data_list, label_list, plot_name, x_axis, y_axis, peaks, peaks_list, export_path)
 
     def collect_lights_out_events(self, data, roll_w_size=1500, plot=False, plot_title='peak detector output'):
         """Identifies potential lights-out events from the given data.
@@ -3117,32 +3085,6 @@ class BlockSync:
 
         return df
 
-    def create_eye_data_old(self):
-        # create the eye_data dfs to finalize the translation and sort out some mess
-        self.right_eye_data = self.re_df.copy()
-        self.right_eye_data = self.right_eye_data[['Arena_TTL', 'R_eye_frame', 'ms_axis',
-                                                   'center_x_rotated', 'center_y_rotated',
-                                                   'phi_rotated', 'width', 'height']]
-        self.right_eye_data = self.get_maj_min_axes(self.right_eye_data)
-        self.left_eye_data = self.le_df.copy()
-        self.left_eye_data = self.left_eye_data[['Arena_TTL', 'L_eye_frame', 'ms_axis',
-                                                 'center_x_rotated', 'center_y_rotated',
-                                                 'phi_rotated', 'width', 'height']]
-        self.left_eye_data = self.get_maj_min_axes(self.left_eye_data)
-        # change dataframe column names to comply with earlier code
-        translation_dict = {'center_x_rotated': 'center_x',
-                            'center_y_rotated': 'center_y',
-                            'phi_rotated': 'phi',
-                            'L_eye_frame': 'eye_frame',
-                            'R_eye_frame': 'eye_frame',
-                            'Arena_TTL': 'OE_timestamp'}
-        for df in [self.right_eye_data, self.left_eye_data]:
-            print(df.columns)
-            df.rename(columns=translation_dict, inplace=True)
-            print(df.head())
-
-        print('successfully rotated the data reference horizon to tear-ducts, created left/right_eye_data')
-
     def create_eye_data(self):
         """
         Build standardized per-eye dataframes used downstream.
@@ -3394,46 +3336,6 @@ class BlockSync:
         self.right_eye_kerr_angles.to_csv(self.analysis_path / f'right_kerr_angle_{name_tag}.csv')
         print(f'finished successfully and saved to {self.analysis_path} with tag= {name_tag}')
 
-    def block_eye_plot(self, export=False, ms_x_axis=True, plot_saccade_locs=False,
-                       saccade_frames_l=None, saccade_frames_r=None):
-        # normalize values:
-        le_el_z = (self.le_df.ellipse_size - self.le_df.ellipse_size.mean()) / self.le_df.ellipse_size.std()
-        le_x_z = (self.le_df.center_x - np.mean(self.le_df.center_x)) / self.le_df.center_x.std()
-        le_y_z = (self.le_df.center_y - np.mean(self.le_df.center_y)) / self.le_df.center_y.std()
-        re_el_z = (self.re_df.ellipse_size - self.re_df.ellipse_size.mean()) / self.re_df.ellipse_size.std()
-        re_x_z = (self.re_df.center_x - np.mean(self.re_df.center_x)) / self.re_df.center_x.std()
-        re_y_z = (self.re_df.center_y - np.mean(self.re_df.center_y)) / self.re_df.center_y.std()
-        if ms_x_axis is False:
-            x_axis = self.final_sync_df['Arena_TTL'].values
-            b_fig = figure(title=f'Pupil combined metrics block {self.block_num}',
-                           x_axis_label='OE Timestamps',
-                           y_axis_label='Z score',
-                           width=1500,
-                           height=700)
-        else:
-            x_axis = self.final_sync_df['Arena_TTL'].values / (self.sample_rate / 1000)
-            b_fig = figure(title=f'Pupil combined metrics block {self.block_num}',
-                           x_axis_label='[Milliseconds]',
-                           y_axis_label='[Z score]',
-                           width=1500,
-                           height=700)
-        b_fig.add_tools(HoverTool())
-        b_fig.line(x_axis, le_el_z + 7, legend_label='Left Eye Diameter', line_width=1.5, line_color='blue')
-        b_fig.line(x_axis, le_x_z + 14, legend_label='Left Eye X Position', line_width=1, line_color='cyan')
-        b_fig.line(x_axis, le_y_z, legend_label='Left Eye Y position', line_width=1, line_color='green')
-        b_fig.line(x_axis, re_el_z + 7, legend_label='Right Eye Diameter', line_width=1.5, line_color='red')
-        b_fig.line(x_axis, re_x_z + 14, legend_label='Right Eye X Position', line_width=1, line_color='orange')
-        b_fig.line(x_axis, re_y_z, legend_label='Right Eye Y position', line_width=1, line_color='pink')
-        if plot_saccade_locs:
-            b_fig.vbar(x=saccade_frames_l, width=1, bottom=-4, top=-1,
-                       alpha=0.8, color='purple', legend_label='Left saccades')
-            b_fig.vbar(x=saccade_frames_r, width=1, bottom=-4, top=-1,
-                       alpha=0.8, color='brown', legend_label='Right saccades')
-        if export:
-            b_output.output_file(filename=str(self.analysis_path / f'pupillometry_block_{self.block_num}.html'),
-                                 title=f'block {self.block_num} pupillometry')
-        show(b_fig)
-
     def pupil_speed_calc(self):
 
         """This function creates a per-frame-velocity vector and
@@ -3474,130 +3376,12 @@ class BlockSync:
                    line_color='red')
         show(b_fig)
 
-    def saccade_event_analayzer(self, threshold=2, automatic=False, overwrite=False):
-        """
-        This method first finds the speed of the pupil in each frame, then detects saccade events
-        :param overwrite:
-        :param automatic: when set to true, will go with the given threshold and not prompt the user for input,
-        might create a wrongly thresholded dataset - use with caution
-        :param threshold: The velocity threshold value to use
-        :return:
-        """
-
-        # first, collect pupil speed:
-        self.pupil_speed_calc()
-
-        # now check if the anlaysis was already performed:
-        if (self.analysis_path / 'r_saccades.csv').exists() and (self.analysis_path / 'l_saccades.csv').exists() \
-                and (overwrite is False):
-            self.r_saccades_chunked = pd.read_csv(self.analysis_path / 'r_saccades.csv')
-            self.l_saccades_chunked = pd.read_csv(self.analysis_path / 'l_saccades.csv')
-            if 'Unnamed: 0' in self.r_saccades_chunked.columns:
-                self.r_saccades_chunked = self.r_saccades_chunked.drop(axis=1, labels='Unnamed: 0')
-            if 'Unnamed: 0' in self.l_saccades_chunked.columns:
-                self.l_saccades_chunked = self.l_saccades_chunked.drop(axis=1, labels='Unnamed: 0')
-            print('loaded chunked saccade data from analysis folder')
-            return
-
-        # This section is a trial & error iteration with a dialogue to determine correct thresholding values
-        l_saccades = None
-        r_saccades = None
-        flag = 0
-        while flag == 0:
-            # This segment gets saccades according to a given threshold
-            l_saccades = self.ms_axis[np.argwhere(self.l_e_speed > threshold)]
-            l_saccades = signal.medfilt(l_saccades[:, 0], 5)
-            r_saccades = self.ms_axis[np.argwhere(self.r_e_speed > threshold)]
-            r_saccades = signal.medfilt(r_saccades[:, 0], 5)
-            if automatic is False:
-                # This segment plots it for inspection and prompts a different threshold when needed
-                self.block_eye_plot(plot_saccade_locs=True, saccade_frames_r=r_saccades, saccade_frames_l=l_saccades)
-                answer = input('look at the graph - is the threshold for speed okay? y/n or abort')
-                if answer == 'y':
-                    flag = 1
-                elif answer == 'n':
-                    threshold = float(input('insert another threshold value to try'))
-                elif answer == 'abort':
-                    print('giving up on the block')
-                    return None
-                else:
-                    print('bad input, going around again...')
-            else:
-                print('automatic ON, Going ahead with the baseline threshold')
-                flag = 1
-        self.l_saccades = l_saccades
-        self.r_saccades = r_saccades
-
-        # saccade chunker for each eye:
-        eye_dict = {
-            0: 'left_eye_saccades',
-            1: 'right_eye_saccades'
-        }
-        df_dict = {}
-        for i, saccade_times in enumerate([self.l_saccades, self.r_saccades]):
-            # collect indeces where diff is more than one frame, these are saccade starts locations
-            saccades_begin = np.argwhere(np.diff(saccade_times) > 20)
-            # NOTICE THE FAT FINGER 20, it stems from the sample rate
-            # Verify that the mask will begin with a start event:
-            if 0 not in saccades_begin:
-                saccades_begin = np.insert(saccades_begin, 1, 0)
-            # create binary masks for start and end locations
-            saccade_start = np.zeros(len(saccade_times[1:]))
-            saccade_start[saccades_begin] = 1
-            saccade_ends = np.zeros(len(saccade_times[1:]))
-            saccade_ends[saccades_begin - 1] = 1
-            # create a dataframe for time masking
-            df = pd.DataFrame({
-                'saccade_times': saccade_times[1:],
-                'diff_list': np.diff(saccade_times),
-                'saccade_start': saccade_start,
-                'saccade_end': saccade_ends
-            })
-            # use masks to get times for start / end of saccades
-            saccade_start_times = df['saccade_times'][df['saccade_start'] == 1]
-            saccade_end_times = df['saccade_times'][df['saccade_end'] == 1]
-
-            df_dict[eye_dict[i]] = pd.DataFrame({
-                'saccade_start': saccade_start_times,
-                'saccade_end': saccade_end_times
-            })
-        # collect start times and lengths for each saccade
-        tight_dict = {}
-        for eye in ['left_eye_saccades', 'right_eye_saccades']:
-            start = np.array(df_dict[eye]['saccade_start'].dropna())
-            end = np.array(df_dict[eye]['saccade_end'].dropna())
-            lengths = (end - start) // 17.05
-            if eye == 'left_eye_saccades':
-                start_conditions = self.le_df.iloc[self.le_df['ms_axis'].isin(start).values]
-                end_conditions = self.le_df.iloc[self.le_df['ms_axis'].isin(end).values]
-            elif eye == 'right_eye_saccades':
-                start_conditions = self.re_df.iloc[self.re_df['ms_axis'].isin(start).values]
-                end_conditions = self.re_df.iloc[self.re_df['ms_axis'].isin(end).values]
-
-            # This segment deals with getting the Euclidean distance without trying to take the sqrt of 0:
-            dist_squared = ((start_conditions['center_x'].values - end_conditions['center_x'].values) ** 2) + \
-                           ((start_conditions['center_y'].values - end_conditions['center_y'].values) ** 2)
-            sqrt_values = np.sqrt(dist_squared[dist_squared != 0].astype(float))
-            euclidean_distance = np.zeros_like(dist_squared)
-            euclidean_distance[dist_squared != 0] = sqrt_values
-            # euclidean_distance = np.where(dist_squared != 0, np.sqrt(dist_squared[dist_squared != 0]), 0)
-            tight_dict[eye] = pd.DataFrame({
-                'saccade_start_ms': start,
-                'saccade_length_frames': lengths,
-                'saccade_magnitude': euclidean_distance
-            })
-
-        self.r_saccades_chunked = tight_dict['right_eye_saccades']
-        self.l_saccades_chunked = tight_dict['left_eye_saccades']
-        self.r_saccades_chunked.to_csv(self.analysis_path / 'r_saccades.csv')
-        self.l_saccades_chunked.to_csv(self.analysis_path / 'l_saccades.csv')
-
     def get_zeroth_sample_number(self):
         """
         Open-ephys recordings write events from an imaginary zeroth timestamp a few seconds before sample recording
         actually starts. This creates a lag between the file's internal timestamps as saved in the timestamps stream of
-        different continuous channels and the count-based timestamps paradigm of the matlab code from Mark.
-        To correct this, I need to take the first sample number of this recording and subtract it from all
+        different continuous channels and the count-based timestamps paradigm of the matlab code from EvolutionaryNeuralCoding/generalAnalysis.
+        To correct this, we need to take the first sample number of this recording and subtract it from all
         timestamps-based synchronization (primarily events) so that everything can live on a ms timebase counted from
         sample#0
         :return:
@@ -3628,522 +3412,8 @@ class BlockSync:
             del session
         print('got it!')
 
-    @staticmethod
-    def nan_helper(y):
-        """Helper to handle indices and logical indices of NaNs.
-
-        Input:
-            - y, 1d numpy array with possible NaNs
-        Output:
-            - nans, logical indices of NaNs
-            - index, a function, with signature indices= index(logical_indices),
-              to convert logical indices of NaNs to 'equivalent' indices
-        """
-        return np.isnan(y), lambda z: z.nonzero()[0]
-
-    def parse_dataset_to_df(self, saccade_dict):
-
-        df = pd.DataFrame(
-            columns=['datetime', 'block', 'eye', 'timestamps', 'fs', 'pxx', 'samples', 'x_coords', 'y_coords',
-                     'vid_inds', 'x_speed', 'y_speed', 'magnitude', 'dx', 'dy', 'direction', 'accel'])
-
-        index_counter = 0
-
-        block = saccade_dict  # in a certain block
-        for e in block.keys():
-            eye = block[e]  # in one of the eyes
-            for row in range(len(eye['samples'])):  # for each saccade
-                df.at[index_counter, 'datetime'] = self.exp_date_time
-                df.at[index_counter, 'block'] = self.block_num
-                df.at[index_counter, 'eye'] = e
-                for col in eye.keys():  # for each columm
-                    v = eye[col][row]  # get value of location
-                    df.at[index_counter, col] = v
-
-                print(index_counter, end='\r', flush=True)
-                index_counter += 1
-
-        print(f'done, dataframe contains {index_counter} saccades')
-        return df
-
-    def saccade_dict_creation(self, sampling_window_ms, ep_channel_number,
-                              automate_saccade_detection=True, overwrite_saccade_data=False):
-        """
-        This function cascades over the steps that end in two dataframe objects, one for synced saccades and the other
-        non-synced saccades. This function requires completion of all previous analysis steps (in particular, lizMov.mat
-        should be produced using Mark's code)
-        :param overwrite_saccade_data:
-        :param automate_saccade_detection:
-        :param sampling_window_ms: the time window for each saccade (half before half after the saccade)
-        :param ep_channel_number: a channel to get neural data from, limited to 1 for now (you can use get_data to
-        draw additional channels based on timestamps from the dataframe later
-        :return:
-        """
-        # collect accelerometer data
-        # path definition
-        p = self.oe_path / 'analysis'
-        analysis_list = os.listdir(p)
-        correct_analysis = [i for i in analysis_list if self.animal_call in i][0]
-        p = p / str(correct_analysis)
-        mat_path = p / 'lizMov.mat'
-        print(f'path to mat file is {mat_path}')
-        # read mat file
-        mat_data = h5py.File(str(mat_path), 'r')
-        mat_dict = {'t_mov_ms': mat_data['t_mov_ms'][:],
-                    'movAll': mat_data['movAll'][:]}
-
-        acc_df = pd.DataFrame(data=np.array([mat_dict['t_mov_ms'][:, 0], mat_dict['movAll'][:, 0]]).T,
-                              columns=['t_mov_ms', 'movAll'])
-        mat_data.close()
-
-        self.saccade_event_analayzer(automatic=automate_saccade_detection,
-                                     overwrite=overwrite_saccade_data,
-                                     threshold=2)
-
-        # create the top-level block dict object
-        self.saccade_dict = {
-            'L': {},
-            'R': {}
-        }
-
-        # create and populate the internal dictionaries (for each eye)
-        for i, e in enumerate(['L', 'R']):
-            # get the correct saccades_chunked object and eye_df
-            saccades_chunked = [self.l_saccades_chunked, self.r_saccades_chunked][i]
-            eye_df = [self.le_df, self.re_df][i]
-            saccades = saccades_chunked[saccades_chunked.saccade_length_frames > 0]
-            saccade_times = np.sort(saccades.saccade_start_ms.values)
-            saccade_lengths = saccades.saccade_length_frames.values
-            ep_channel_numbers = [ep_channel_number]
-            pre_saccade_ts = saccade_times - (sampling_window_ms / 2)  #
-
-            # get the data of the relevant saccade time windows:
-            print(f"getting data with block_number {self.block_num}: \n"
-                  f"There are {len(pre_saccade_ts)} saccade events: \n"
-                  f"pre_saccade_ts = {pre_saccade_ts}"
-                  f"")
-            ep_data, ep_timestamps = self.oe_rec.get_data(ep_channel_numbers,
-                                                          pre_saccade_ts,
-                                                          sampling_window_ms,
-                                                          convert_to_mv=True)  # data [n_channels, n_windows, nSamples]
-
-            # start populating the dictionary
-            self.saccade_dict[e] = {
-                "timestamps": [],
-                "fs": [],
-                "pxx": [],
-                "samples": [],
-                "x_coords": [],
-                "y_coords": [],
-                "vid_inds": [],
-                "accel": [],
-                "length": []
-            }
-
-            # go saccade by saccade
-            for sac_i, j in enumerate(range(len(pre_saccade_ts))):
-                # get specific saccade samples:
-                saccade_samples = ep_data[0, j, :]  # [n_channels, n_windows, nSamples]
-                # get the spectral profile for the segment
-                fs, pxx = welch(saccade_samples, self.sample_rate, nperseg=16384, return_onesided=True)
-
-                j0 = pre_saccade_ts[j]
-                j1 = pre_saccade_ts[j] + sampling_window_ms
-                s_df = eye_df.query("ms_axis >= @j0 and ms_axis <= @j1")
-                x_coords = s_df['center_x'].values
-                y_coords = s_df['center_y'].values
-                vid_inds = np.array(s_df.Arena_TTL.values - s_df.Arena_TTL.values[0], dtype='int32')
-
-                # deal with missing datapoints in saccades:
-                interpolated_coords = []
-                bad_saccade = False
-                for y in [x_coords, y_coords]:
-                    nan_count = np.sum(np.isnan(y.astype(float)))
-                    if nan_count > 0:
-                        if nan_count < len(y) / 2:
-                            # print(f'saccade at ind {i} has {nan_count} nans, interpolating...')
-                            # find nan values in the vector
-                            nans, z = self.nan_helper(y.astype(float))
-                            # interpolate using the helper lambda function
-                            y[nans] = np.interp(z(nans), z(~nans), y[~nans].astype(float))
-                            # replace the interpolated values for the saccade
-                            interpolated_coords.append(y)
-                        else:
-                            print(f'too many nans at ind {j}, ({np.sum(np.isnan(y))}) - cannot interpolate properly',
-                                  end='\r', flush=True)
-                            bad_saccade = True
-                    else:
-                        interpolated_coords.append(y)
-
-                # get accelerometer data for the ms_based section:
-                # get_ms_segment
-                ms_segment = s_df['ms_axis']
-                s0 = ms_segment.iloc[0]
-                s1 = ms_segment.iloc[-1]
-                mov_mag = np.sum(acc_df.query('t_mov_ms > @s0 and t_mov_ms < @s1').movAll.values)
-
-                # remove bad saccades
-                if bad_saccade:
-                    continue
-                # append OK saccades
-                else:
-                    self.saccade_dict[e]['timestamps'].append(pre_saccade_ts[j])
-                    self.saccade_dict[e]['x_coords'].append(interpolated_coords[0])
-                    self.saccade_dict[e]['y_coords'].append(interpolated_coords[1])
-                    self.saccade_dict[e]['vid_inds'].append(vid_inds)
-                    self.saccade_dict[e]['fs'].append(fs)
-                    self.saccade_dict[e]['pxx'].append(pxx)
-                    self.saccade_dict[e]['samples'].append(saccade_samples)
-                    self.saccade_dict[e]['accel'].append(mov_mag)
-                    self.saccade_dict[e]['length'].append(saccade_lengths[sac_i])
-        print(f'block {self.block_num} saccade dict done')
-        self.sort_synced_saccades()
-
-    def saccade_dict_creation_3d(self, sampling_window_ms, ep_channel_number,
-                                 automate_saccade_detection=True, overwrite_saccade_data=False):
-        """
-        This function cascades over the steps that end in two dataframe objects, one for synced saccades and the other
-        non-synced saccades. This function requires completion of all previous analysis steps (in particular, lizMov.mat
-        should be produced using Mark's code) - This is the 3D projection demo version - still under construction
-        :param overwrite_saccade_data: When True, will overwrite existing saccade detections
-        :param automate_saccade_detection: When True, will not prompt for a visual inspection of saccade detections
-        :param sampling_window_ms: the time window for each saccade (half before half after the saccade)
-        :param ep_channel_number: a channel to get neural data from, limited to 1 for now (you can use get_data to
-        draw additional channels based on timestamps from the dataframe later
-        :return:
-        """
-
-        # as a preliminary step - add phi and theta to the le_df dataframe
-        # read the 3d projection analysis:
-        le_df_3d = pd.read_csv(self.analysis_path / 'le_df_3d.csv', index_col=0)
-        le_df_3d = le_df_3d[['timestamp', 'diameter', 'theta', 'phi']]
-        le_df_3d.rename(columns={'timestamp': 'ms_axis'}, inplace=True)
-        le_df_3d.interpolate(method='linear', inplace=True)
-
-        re_df_3d = pd.read_csv(self.analysis_path / 're_df_3d.csv', index_col=0)
-        re_df_3d = re_df_3d[['timestamp', 'diameter', 'theta', 'phi']]
-        re_df_3d.rename(columns={'timestamp': 'ms_axis'}, inplace=True)
-        re_df_3d.interpolate(method='linear', inplace=True)
-        self.le_df = self.le_df.merge(le_df_3d[['ms_axis', 'theta', 'phi']],
-                                      on='ms_axis', how='left',
-                                      suffixes=('_og', '_3d'))
-        self.re_df = self.re_df.merge(re_df_3d[['ms_axis', 'theta', 'phi']],
-                                      on='ms_axis', how='left',
-                                      suffixes=('', '_3d'))
-
-        # collect accelerometer data
-        # path definition
-        p = self.oe_path / 'analysis'
-        analysis_list = os.listdir(p)
-        correct_analysis = [i for i in analysis_list if self.animal_call in i][0]
-        p = p / str(correct_analysis)
-        mat_path = p / 'lizMov.mat'
-        print(f'path to mat file is {mat_path}')
-        # read mat file
-        mat_data = h5py.File(str(mat_path), 'r')
-        mat_dict = {'t_mov_ms': mat_data['t_mov_ms'][:],
-                    'movAll': mat_data['movAll'][:]}
-
-        acc_df = pd.DataFrame(data=np.array([mat_dict['t_mov_ms'][:, 0], mat_dict['movAll'][:, 0]]).T,
-                              columns=['t_mov_ms', 'movAll'])
-        mat_data.close()
-
-        self.saccade_event_analayzer(automatic=automate_saccade_detection,
-                                     overwrite=overwrite_saccade_data,
-                                     threshold=2)
-
-        # create the top-level block dict object
-        self.saccade_dict = {
-            'L': {},
-            'R': {}
-        }
-
-        # create and populate the internal dictionaries (for each eye)
-        for i, e in enumerate(['L', 'R']):
-            # get the correct saccades_chunked object and eye_df
-            saccades_chunked = [self.l_saccades_chunked, self.r_saccades_chunked][i]
-            eye_df = [self.le_df, self.re_df][i]
-            saccades = saccades_chunked[saccades_chunked.saccade_length_frames > 0].sort_values(by='saccade_start_ms')
-            saccade_times = saccades.saccade_start_ms.values
-            saccade_lengths = saccades.saccade_length_frames.values
-            ep_channel_numbers = [ep_channel_number]
-            pre_saccade_ts = saccade_times - (sampling_window_ms / 2)  #
-
-            # get the data of the relevant saccade time windows:
-            print(f"getting data with block_number {self.block_num}: \n"
-                  f"There are {len(pre_saccade_ts)} saccade events: \n"
-                  f"pre_saccade_ts = {pre_saccade_ts}"
-                  f"")
-            ep_data, ep_timestamps = self.oe_rec.get_data(ep_channel_numbers,
-                                                          pre_saccade_ts,
-                                                          sampling_window_ms,
-                                                          convert_to_mv=True)  # data [n_channels, n_windows, nSamples]
-
-            # start populating the dictionary
-            self.saccade_dict[e] = {
-                "timestamps": [],
-                "fs": [],
-                "pxx": [],
-                "samples": [],
-                "x_coords": [],
-                "y_coords": [],
-                "vid_inds": [],
-                "accel": [],
-                "length": []
-            }
-
-            # go saccade by saccade
-            for sac_i, j in enumerate(range(len(pre_saccade_ts))):
-                # get specific saccade samples:
-                saccade_samples = ep_data[0, j, :]  # [n_channels, n_windows, nSamples]
-                # get the spectral profile for the segment
-                fs, pxx = welch(saccade_samples, self.sample_rate, nperseg=16384, return_onesided=True)
-
-                j0 = pre_saccade_ts[j]
-                j1 = pre_saccade_ts[j] + sampling_window_ms
-                s_df = eye_df.query("ms_axis >= @j0 and ms_axis <= @j1")
-                x_coords = s_df['phi_3d'].values
-                y_coords = s_df['theta'].values
-                vid_inds = np.array(s_df.Arena_TTL.values - s_df.Arena_TTL.values[0], dtype='int32')
-
-                # deal with missing datapoints in saccades:
-                interpolated_coords = []
-                bad_saccade = False
-                for y in [x_coords, y_coords]:
-                    nan_count = np.sum(np.isnan(y.astype(float)))
-                    if nan_count > 0:
-                        if nan_count < len(y) / 2:
-                            # print(f'saccade at ind {i} has {nan_count} nans, interpolating...')
-                            # find nan values in the vector
-                            nans, z = self.nan_helper(y.astype(float))
-                            # interpolate using the helper lambda function
-                            y[nans] = np.interp(z(nans), z(~nans), y[~nans].astype(float))
-                            # replace the interpolated values for the saccade
-                            interpolated_coords.append(y)
-                        else:
-                            print(f'too many nans at ind {j}, ({np.sum(np.isnan(y))}) - cannot interpolate properly',
-                                  end='\r', flush=True)
-                            bad_saccade = True
-                    else:
-                        interpolated_coords.append(y)
-
-                # get accelerometer data for the ms_based section:
-                # get_ms_segment
-                ms_segment = s_df['ms_axis']
-                s0 = ms_segment.iloc[0]
-                s1 = ms_segment.iloc[-1]
-                mov_mag = np.sum(acc_df.query('t_mov_ms > @s0 and t_mov_ms < @s1').movAll.values)
-
-                # remove bad saccades
-                if bad_saccade:
-                    continue
-                # append OK saccades
-                else:
-                    self.saccade_dict[e]['timestamps'].append(pre_saccade_ts[j])
-                    self.saccade_dict[e]['x_coords'].append(interpolated_coords[0])
-                    self.saccade_dict[e]['y_coords'].append(interpolated_coords[1])
-                    self.saccade_dict[e]['vid_inds'].append(vid_inds)
-                    self.saccade_dict[e]['fs'].append(fs)
-                    self.saccade_dict[e]['pxx'].append(pxx)
-                    self.saccade_dict[e]['samples'].append(saccade_samples)
-                    self.saccade_dict[e]['accel'].append(mov_mag)
-                    self.saccade_dict[e]['length'].append(saccade_lengths[sac_i])
-        print(f'block {self.block_num} saccade dict done')
-        self.sort_synced_saccades()
-
-    @staticmethod
-    def saccade_before_after_broken(coords):
-        max_ind = np.argmax(coords)
-        min_ind = np.argmin(coords)
-        if max_ind < min_ind:
-            before = coords[max_ind]
-            after = coords[min_ind]
-        else:
-            before = coords[min_ind]
-            after = coords[max_ind]
-        delta = after - before
-        return before, after, delta
-
-    def sort_synced_saccades(self):
-        """
-        This function takes a saccades dictionary and returns two sorted dictionaries -
-        one with synced saccades, the other with non-synced saccades
-        :param b_dict:
-        :return:
-        """
-
-        b_dict = self.saccade_dict
-        # get the two timestamps vectors
-        l_times = np.array(b_dict['L']['timestamps'])
-        r_times = np.array(b_dict['R']['timestamps'])
-
-        # I want to collect the matching indices from the L and R dictionaries
-        # and create a "synced saccades dict" object
-        # that only has two-eyed saccades included in it...
-        # first, I have to understand which rows of the dictionaries go together:
-        # create a matrix of [left eye timestamp, -,left eye ind, -]
-        s_mat = np.empty([len(l_times), 5])
-        s_mat[:, 0] = l_times
-        s_mat[:, 2] = np.arange(0, len(l_times))
-        # find and fit the right eye times and indices on columns 1 and 3
-        for i, lt in enumerate(s_mat[:, 0]):
-            array = np.abs((r_times - lt))
-            ind_min_diff = np.argmin(array)
-            min_diff = array[ind_min_diff]
-            rt = r_times[ind_min_diff]
-            s_mat[i, 3] = ind_min_diff
-            s_mat[i, 1] = rt
-            s_mat[i, 4] = min_diff
-
-        # create a dataframe for queries and testing, define a threshold and remove non sync saccades
-        s_df = pd.DataFrame(s_mat, columns=['lt', 'rt', 'left_ind', 'right_ind', 'diff'])
-        threshold = 1400  # 70 ms to consider a saccade simultaneous
-        s_df = s_df.query('diff<@threshold')
-        ind_dict = {
-            'L': s_df['left_ind'].values,
-            'R': s_df['right_ind'].values
-        }
-
-        # create a synced dictionary for the block:
-        synced_b_dict = {
-            'L': {},
-            'R': {}
-        }
-        for e in ['L', 'R']:
-            inds = ind_dict[e].astype(int)
-            synced_b_dict[e] = {
-                "timestamps": np.array(b_dict[e]['timestamps'])[inds],
-                "fs": np.array(b_dict[e]['fs'])[inds],
-                "pxx": np.array(b_dict[e]['pxx'])[inds],
-                "samples": np.array(b_dict[e]['samples'])[inds],
-                "x_coords": np.array(b_dict[e]['x_coords'], dtype=object)[inds],
-                "y_coords": np.array(b_dict[e]['y_coords'], dtype=object)[inds],
-                "vid_inds": np.array(b_dict[e]['vid_inds'], dtype=object)[inds],
-                "accel": np.array(b_dict[e]['accel'])[inds],
-                "length": np.array(b_dict[e]['length'], dtype=object)[inds]
-            }
-
-        non_sync_b_dict = {
-            'L': {},
-            'R': {}
-        }
-        for e in ['L', 'R']:
-            inds = ind_dict[e].astype(int)
-            logical = np.ones(len(b_dict[e]['timestamps'])).astype(bool)
-            logical[inds] = 0
-            non_sync_b_dict[e] = {
-                "timestamps": np.array(b_dict[e]['timestamps'])[logical],
-                "fs": np.array(b_dict[e]['fs'])[logical],
-                "pxx": np.array(b_dict[e]['pxx'])[logical],
-                "samples": np.array(b_dict[e]['samples'])[logical],
-                "x_coords": np.array(b_dict[e]['x_coords'], dtype=object)[logical],
-                "y_coords": np.array(b_dict[e]['y_coords'], dtype=object)[logical],
-                "vid_inds": np.array(b_dict[e]['vid_inds'], dtype=object)[logical],
-                "accel": np.array(b_dict[e]['accel'])[logical],
-                "length": np.array(b_dict[e]['length'], dtype=object)[inds]
-            }
-        self.calibrate_pixel_size(10)
-        self.synced_saccades_dict = self.saccade_dict_enricher(synced_b_dict)
-        self.synced_saccades_df = self.parse_dataset_to_df(self.synced_saccades_dict)
-        # get a calibrated dx dy
-        self.synced_saccades_df['calib_dx'] = \
-            self.synced_saccades_df['dx'] * \
-            (self.synced_saccades_df['eye'].map({'R': self.R_pix_size, 'L': self.L_pix_size}))
-        self.synced_saccades_df['calib_dy'] = \
-            self.synced_saccades_df['dy'] * \
-            (self.synced_saccades_df['eye'].map({'R': self.R_pix_size, 'L': self.L_pix_size}))
-
-        self.non_synced_saccades_dict = self.saccade_dict_enricher(non_sync_b_dict)
-        self.non_synced_saccades_df = self.parse_dataset_to_df(self.non_synced_saccades_dict)
-        self.non_synced_saccades_df['calib_dy'] = \
-            self.non_synced_saccades_df['dy'] * \
-            (self.non_synced_saccades_df['eye'].map({'R': self.R_pix_size, 'L': self.L_pix_size}))
-        self.non_synced_saccades_df['calib_dx'] = \
-            self.non_synced_saccades_df['dx'] * \
-            (self.non_synced_saccades_df['eye'].map({'R': self.R_pix_size, 'L': self.L_pix_size}))
-
-    @staticmethod
-    def spherical_to_polar(yaw, pitch):
-        """
-        This function recieves yaw and pitch in radians and returns the polar coordinates
-        :param yaw: theta values in radians
-        :param pitch: phi values in radians
-        :return: r: magnitude, theta: the angle (counter-clockwise from the positive x-axis)
-        """
-
-        # Calculate r
-        r = math.sqrt(yaw ** 2 + pitch ** 2)
-
-        # Calculate theta
-        theta_rad = math.atan2(pitch, yaw)
-
-        # Convert theta to degrees
-        theta_deg = math.degrees(theta_rad)
-
-        # Adjust theta to the range [0, 360)
-        if theta_deg < 0:
-            theta_deg += 360
-
-        return r, theta_deg
-
-    @staticmethod
-    def saccade_before_after(coords):
-        before = coords[0]
-        after = coords[-1]
-        delta = after - before
-        return before, after, delta
-
-    def saccade_dict_enricher(self, saccade_dict):
-        """
-        Helper function to enrich saccade dictionary before arranging it into a dataframe
-        :param saccade_dict:
-        :return:
-        """
-
-        for e in ['L', 'R']:
-            saccade_dict[e]['x_speed'] = []
-            saccade_dict[e]['y_speed'] = []
-            saccade_dict[e]['magnitude'] = []
-            saccade_dict[e]['dx'] = []  # TEMP
-            saccade_dict[e]['dy'] = []  # TEMP
-            saccade_dict[e]['direction'] = []
-            saccade_dict[e]['saccade_initiation_x'] = []
-            saccade_dict[e]['saccade_initiation_y'] = []
-            saccade_dict[e]['saccade_termination_x'] = []
-            saccade_dict[e]['saccade_termination_y'] = []
-
-            for s in range(len(saccade_dict[e]['timestamps'])):
-                # speed:
-                saccade_dict[e]['x_speed'].append(np.insert(np.diff(saccade_dict[e]['x_coords'][s]), 0, float(0)))
-                saccade_dict[e]['y_speed'].append(np.insert(np.diff(saccade_dict[e]['y_coords'][s]), 0, float(0)))
-                saccade_length = saccade_dict[e]['length'][s]
-                # Understand directionality and magnitude:
-                # understand before and after - SHOULD THINK ABOUT THIS FOR FURTHER CORRECTION LATER
-                saccade_initiation_ind = int(len(saccade_dict[e]['x_coords'][s])) // 2
-                saccade_end_ind = saccade_initiation_ind + int(saccade_length)
-                x_before, x_after, dx = (
-                    self.saccade_before_after(
-                        saccade_dict[e]['x_coords'][s][saccade_initiation_ind:saccade_end_ind + 1]))
-                y_before, y_after, dy = (
-                    self.saccade_before_after(
-                        saccade_dict[e]['y_coords'][s][saccade_initiation_ind:saccade_end_ind + 1]))
-
-                s_mag, theta = self.spherical_to_polar(dx, dy)
-
-                # collect into dict
-                saccade_dict[e]['dx'].append(dx)
-                saccade_dict[e]['dy'].append(dy)
-                saccade_dict[e]['magnitude'].append(s_mag)
-                saccade_dict[e]['direction'].append(theta)
-                saccade_dict[e]['saccade_initiation_x'].append(x_before)
-                saccade_dict[e]['saccade_initiation_y'].append(y_before)
-                saccade_dict[e]['saccade_termination_x'].append(x_after)
-                saccade_dict[e]['saccade_termination_y'].append(y_after)
-
-        return saccade_dict
-
     def block_get_lizard_movement(self):
-        # collect accelerometer data
+        # collect accelerometer data from matlab created liMov.mat files
         # path definition
         p = self.oe_path / 'analysis'
         analysis_list = os.listdir(p)
