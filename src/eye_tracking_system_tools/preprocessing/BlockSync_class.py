@@ -235,6 +235,10 @@ class BlockSync:
             f'BlockSync object for animal {self.animal_call} with \n'
             f'block_num {self.block_num} at date {self.exp_date_time}')
 
+    # ============================================================================
+    # INITIALIZATION AND SETUP
+    # ============================================================================
+
     def get_sample_rate(self):
         """
         This is a utility function that gets the sample rate for the block through the settings.xml file under the
@@ -292,6 +296,11 @@ class BlockSync:
         else:
             print('could not find the sample rate')
             return None
+
+    # ============================================================================
+    # CORE DATA PREPARATION PIPELINE
+    # ============================================================================
+    # [USED IN SYNC PIPELINE] These methods are called in the synchronization workflow
 
     def oe_events_to_csv(self, align_to_zero=True):
         """
@@ -1091,11 +1100,24 @@ class BlockSync:
         else:
             return index_of_lowest_diff
 
+    # ============================================================================
+    # DEPRECATED SYNCHRONIZATION METHODS (Legacy - may be removed in future)
+    # ============================================================================
+    # [DEPRECATED] These methods are from older synchronization approaches.
+    # The new synchronization pipeline is in block_synchronization.ipynb.
+    # Some methods are still used by other notebooks (e.g., manual_outlier_annotation.ipynb)
+    # and are kept for backward compatibility.
+
     def synchronize_block(self, export=True, overwrite=False):
         """
-        This method builds a synced_videos dataframe
-        1. The arena video is used as anchor
-        2. The different anchor timestamps are aligned with the closest frames of the other sources
+        [DEPRECATED] Old synchronization method.
+        
+        This method builds a synced_videos dataframe using arena video as anchor.
+        Replaced by the new simple synchronization approach in block_synchronization.ipynb.
+        
+        Still used by: manual_outlier_annotation.ipynb (keep for compatibility).
+        
+        See: simple_sync_build() in block_synchronization.ipynb for the new approach.
         """
         # check if there is an exported version of the blocksync_df:
         if pathlib.Path(self.analysis_path / 'blocksync_df.csv').exists() and overwrite is False:
@@ -1135,6 +1157,8 @@ class BlockSync:
                                                     target_frame_rate=60,
                                                     margin_of_error=0.1):
         """
+        [DEPRECATED] Old synchronization method for non-60fps acquisitions.
+        
         This method builds a synced_videos dataframe
         1. The arena video is used as anchor
         2. The different anchor timestamps are aligned with the closest frames of the other sources
@@ -1202,6 +1226,10 @@ class BlockSync:
             print(f'exported blocksync_df to {self.analysis_path}/ blocksync_df.csv')
 
     def produce_drift_report(self):
+        """
+        [DEPRECATED] Old drift analysis method.
+        Replaced by jitter analysis methods (get_jitter_reports, correct_jitter).
+        """
         """
         Method to get an accuracy report for the blocksync_df created previously
         :return:
@@ -1302,6 +1330,10 @@ class BlockSync:
         print(f'done, frame_val_list contains {len(frame_val_list)} objects', flush=True)
 
         return frame_val_list
+
+    # ============================================================================
+    # ARENA SYNCHRONIZATION (Legacy - may be deprecated)
+    # ============================================================================
 
     def synchronize_arena_timestamps(self, return_dfs=False, export_sync_df=True, get_only_anchor_vid=False):
         """
@@ -1515,6 +1547,10 @@ class BlockSync:
         return ls[lowest_dist_ind]
 
     def get_eyes_diff_list(self, threshold):
+        """
+        [DEPRECATED] Old diff calculation method.
+        Functionality replaced by jitter analysis pipeline.
+        """
         r_rising = self.blink_rising_edges_detector(self.eye_brightness_df['R_values'].values,
                                                     self.eye_brightness_df['R_eye_frame'], threshold=threshold)
         l_rising = self.blink_rising_edges_detector(self.eye_brightness_df['L_values'].values,
@@ -1550,7 +1586,15 @@ class BlockSync:
                 self.lag_direction = ['left', 'late']
         print(f'The suspected lag between eye cameras is {self.eye_diff_mode} with the direction {self.lag_direction}')
 
+    # ============================================================================
+    # DEPRECATED MANUAL CORRECTION METHODS
+    # ============================================================================
+
     def fix_eye_synchronization(self):
+        """
+        [DEPRECATED] Old manual correction method.
+        Replaced by shift_eye_df_by_index() in block_synchronization.ipynb.
+        """
 
         df = self.eye_brightness_df
         if self.lag_direction[0] == 'right':
@@ -1563,6 +1607,10 @@ class BlockSync:
         print('created manual_sync_df attribute for the block')
 
     def move_eye_sync_manual(self, cols_to_move, step):
+        """
+        [DEPRECATED] Old manual sync movement method.
+        Replaced by shift_eye_df_by_index() in block_synchronization.ipynb.
+        """
 
         df = self.manual_sync_df
         to_shift = df[cols_to_move].copy()
@@ -1570,6 +1618,10 @@ class BlockSync:
         self.manual_sync_df = df
 
     def get_blink_frames_manual(self, threshold=-35):
+        """
+        [DEPRECATED] Old manual blink detection method.
+        Replaced by find_led_blink_frames() and remove_led_blinks_from_eye_df().
+        """
 
         """This is a utility function which detects rising edges for manual synchronization of eyes and arena"""
         r_rising = self.blink_rising_edges_detector(self.manual_sync_df['R_values'].values,
@@ -1581,6 +1633,10 @@ class BlockSync:
         return dict_rising
 
     def full_sync_verification(self, ms_axis=True, with_arena=True):
+        """
+        [DEPRECATED] Old verification method.
+        Replaced by verify_final_df_against_sources() and sanity_plot_final_df() in block_synchronization.ipynb.
+        """
         """
         Run this step before "export_manual_sync_df" to view the synchronization of the arena in relation to eyes,
         if further movements are necessary use "Move_eye_sync_manual" and run again -
@@ -1614,9 +1670,18 @@ class BlockSync:
         show(bokeh_fig)
 
     def export_manual_sync_df(self):
+        """
+        [DEPRECATED] Old manual sync export method.
+        Replaced by export_final_sync_df() in block_synchronization.ipynb.
+        """
         self.manual_sync_df.to_csv(self.analysis_path / 'manual_sync_df.csv')
 
     def import_manual_sync_df(self, align_zero=True):
+        """
+        [DEPRECATED] Old manual sync import method.
+        Still used by: manual_outlier_annotation.ipynb (keep for compatibility).
+        Replaced by load_final_sync_df() in block_synchronization.ipynb.
+        """
         try:
             self.manual_sync_df = pd.read_csv(self.analysis_path / 'manual_sync_df.csv')
             if 'Unnamed: 0' in self.manual_sync_df.columns:
@@ -1768,6 +1833,11 @@ class BlockSync:
 
         print(f'\n ellipses calculation complete')
         return ellipse_df
+
+    # ============================================================================
+    # DATA PROCESSING AND ANALYSIS
+    # ============================================================================
+    # [USED IN SYNC PIPELINE] These methods are used in the downstream pipeline
 
     def read_dlc_data(self, threshold_to_use=0.95, export=True, overwrite=False):
         """
@@ -2236,6 +2306,11 @@ class BlockSync:
             curr_data['top_correlation_y'] = top_corr_y
             del curr_data['top_correlation_xy']
         return curr_data
+
+    # ============================================================================
+    # JITTER CORRECTION AND ANALYSIS
+    # ============================================================================
+    # [USED IN SYNC PIPELINE] These methods are part of the jitter correction workflow
 
     def get_jitter_reports(self,
                            export=False,
@@ -3084,6 +3159,11 @@ class BlockSync:
         df['ratio'] = df['major_ax'] / df['minor_ax']
 
         return df
+
+    # ============================================================================
+    # FINAL DATA EXPORT
+    # ============================================================================
+    # [USED IN SYNC PIPELINE] Creates left/right_eye_data for downstream analysis
 
     def create_eye_data(self):
         """
