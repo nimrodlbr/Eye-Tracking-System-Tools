@@ -30,7 +30,7 @@ from scipy.signal import find_peaks as scipy_find_peaks
 from matplotlib import pyplot as plt
 from itertools import cycle
 import datetime
-# Note: bokeh_plotter is imported lazily in the static method to avoid circular import
+# Note: bokeh_plotter is imported lazily within methods that use it to avoid circular import
 
 '''
 This script defines the BlockSync class which takes all of the relevant data for a given trial and can be utilized
@@ -2106,11 +2106,13 @@ class BlockSync:
             expanded_indices = np.unique(expanded_indices)
 
         if plot:
-            BlockSync.bokeh_plotter([z_score_data], ['z_score'],
-                                    plot_name=plot_title,
-                                    x_axis='Frame',
-                                    y_axis='brightness Z score',
-                                    peaks=expanded_indices)
+            # Lazy import to avoid circular dependency
+            from eye_tracking_system_tools.preprocessing import utility_functions as uf
+            uf.bokeh_plotter([z_score_data], ['z_score'],
+                             plot_name=plot_title,
+                             x_axis='Frame',
+                             y_axis='brightness Z score',
+                             peaks=expanded_indices)
 
         return expanded_indices
 
@@ -2547,7 +2549,9 @@ class BlockSync:
             df = pd.DataFrame.from_dict(self.re_jitter_dict)
         print(video_indices)
         if len(video_indices) < 1:
-            BlockSync.bokeh_plotter([df.top_correlation_dist], ['drift_distance'], peaks=video_indices)
+            # Lazy import to avoid circular dependency
+            from eye_tracking_system_tools.preprocessing import utility_functions as uf
+            uf.bokeh_plotter([df.top_correlation_dist], ['drift_distance'], peaks=video_indices)
         else:
             print('no indices were found to remove')
         print('If these parameters produce good results, run the "remove_large_jitter" function with them')
@@ -2935,11 +2939,13 @@ class BlockSync:
             z_score_data_r = self.rolling_window_z_scores(r_vals, roll_w_size=1500)
             z_score_data_l = self.rolling_window_z_scores(l_vals, roll_w_size=1500)
 
-            BlockSync.bokeh_plotter([z_score_data_r, z_score_data_l],
-                                    label_list=['r_scores', 'l_scores'],
-                                    x_axis='Frame',
-                                    y_axis='brightness Z score',
-                                    peaks=[r_inds, l_inds], peaks_list=True)
+            # Lazy import to avoid circular dependency
+            from eye_tracking_system_tools.preprocessing import utility_functions as uf
+            uf.bokeh_plotter([z_score_data_r, z_score_data_l],
+                             label_list=['r_scores', 'l_scores'],
+                             x_axis='Frame',
+                             y_axis='brightness Z score',
+                             peaks=[r_inds, l_inds], peaks_list=True)
         # I want to understand the drift between the two corrected l_ms vectors now -
         # if a frame appears in two l_ms values, take the larger one (a duplicated frame)
         l_frames = []
