@@ -14,18 +14,9 @@ This repository provides tools for synchronizing eye-tracking videos with arena 
 - Conda (recommended) or pip
 
 ### Installation Options
-
 You have three options for setting up the environment:
 
-#### Option 1: Using pyproject.toml (Recommended)
-
-```bash
-pip install -e .
-```
-
-This will install the package and all dependencies in development mode.
-
-#### Option 2: Using Conda Environment
+#### Option 1: Using Conda Environment (recommanded)
 
 ```bash
 # Create environment from environment.yml
@@ -35,6 +26,14 @@ conda activate eye_repo
 # Install package in development mode
 pip install -e .
 ```
+
+#### Option 2: Using pyproject.toml
+
+```bash
+pip install -e .
+```
+
+This will install the package and all dependencies in development mode.
 
 #### Option 3: Using requirements.txt
 
