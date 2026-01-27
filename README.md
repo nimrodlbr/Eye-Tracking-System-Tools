@@ -56,8 +56,10 @@ python examples/smoke_preprocessing_imports.py
 src/eye_tracking_system_tools/
 ├── preprocessing/     # Data synchronization and preprocessing
 ├── figures/          # Figure reproduction scripts
-├── io/               # I/O utilities
+├── raspberry_pi/      # Raspberry Pi video capture utilities
 └── utils/            # General utilities
+    ├── 3D_printing_files/  # 3D printing files and virtual fitting guide
+    └── meshroom_pipeline_template.mg
 ```
 
 ## Usage
